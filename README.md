@@ -12,8 +12,8 @@ remplace la veille manuelle par un message quotidien trié.
 
 ## Fonctionnalités
 
-- **Récap quotidien** (sauf vendredi) avec uniquement les sorties pas encore
-  notifiées, et **récap hebdo le vendredi** avec les sorties de la semaine et
+- **Récap quotidien** (sauf vendredi) avec les sorties des 14 derniers jours
+  pas encore notifiées : une sortie qu'Apple affiche en retard arrive quand même, et **récap hebdo le vendredi** avec les sorties de la semaine et
   celles annoncées pour les 7 jours suivants.
 - **Tri en un appui** : chaque sortie arrive avec les boutons « ➕ Ajoutée »
   (rangée dans ma playlist) et « 🙈 Ignorer ». Au-delà de 12 sorties d'un coup,
@@ -109,6 +109,7 @@ ne touche jamais au token, à la liste d'artistes ni à la base.
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | — | Bot et seul chat autorisé |
 | `DAILY_TIME`, `WEEKLY_TIME` | `09:00` | Heures d'envoi (Europe/Paris) |
 | `SEND_EMPTY_DAILY` | `0` | `1` = message « Rien de nouveau » les jours vides |
+| `DAILY_LOOKBACK_DAYS` | `14` | Jours couverts par le récap quotidien |
 | `CARDS_MAX` | `12` | Au-delà : liste compacte + `/trier` |
 | `COVERS` | `small` | Pochette en miniature (`off` pour désactiver) |
 | `NOVELTY` | `1` | Analyse de nouveauté (1 appel iTunes par album) |
@@ -123,13 +124,15 @@ pytest
 ruff check .
 ```
 
-91 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
+94 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues
 
-- L'API iTunes peut afficher une sortie avec quelques heures de retard sur
-  l'appli Music : elle arrive alors dans le récap suivant.
+- L'API iTunes peut afficher une sortie avec plusieurs jours de retard sur
+  l'appli Music : elle arrive alors dans le récap qui suit son apparition.
+- Un featuring sur l'album d'un autre artiste n'est pas listé par Apple dans
+  les sorties de l'artiste invité : seuls les singles en featuring le sont.
 - Le bot ne connaît pas l'historique d'écoute : « déjà sorti » veut dire « déjà
   publié par l'artiste », pas « déjà écouté ».
 - Ajouter automatiquement à une playlist Apple Music demanderait l'API Apple

@@ -47,7 +47,12 @@ ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
 # 3,2 s entre deux appels reste sous ce seuil.
 REQUEST_DELAY_S = float(os.getenv("ITUNES_DELAY", "3.2"))
 HTTP_TIMEOUT_S = 20
-ALBUMS_PER_ARTIST = 25  # on trie nous-mêmes par date : on prend de la marge
+# L'API ne trie pas vraiment par date (une sortie de 2023 peut précéder une de
+# 2026) : on lit toutes les fiches renvoyées, c'est la même requête.
+ALBUMS_PER_ARTIST = 200
+# Le récap quotidien regarde les N derniers jours (hors sorties déjà notifiées) :
+# Apple affiche parfois une sortie avec plusieurs jours de retard.
+DAILY_LOOKBACK_DAYS = int(os.getenv("DAILY_LOOKBACK_DAYS", "14"))
 
 # Analyse de nouveauté (1 appel iTunes de plus par album/EP à analyser).
 # NOVELTY=0 la désactive si jamais elle se comportait mal.
@@ -699,11 +704,11 @@ def _make_batch(since: date, upcoming_days: int = 0) -> Batch:
 
 def daily_batch() -> Batch:
     """
-    Sorties des 2 derniers jours PAS ENCORE notifiées. Les sorties déjà
+    Sorties des DAILY_LOOKBACK_DAYS derniers jours PAS ENCORE notifiées. Les sorties déjà
     envoyées sont mémorisées : pas de doublon d'un jour à l'autre. Les sorties
     à date future (pré-sorties) sont ignorées et seront captées le jour J.
     """
-    batch = _make_batch(_today() - timedelta(days=2))
+    batch = _make_batch(_today() - timedelta(days=DAILY_LOOKBACK_DAYS))
     conn = _db()
     seen = {r[0] for r in conn.execute("SELECT album_id FROM seen")}
     conn.close()
