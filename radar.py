@@ -160,6 +160,8 @@ def _db() -> sqlite3.Connection:
         " track_count INTEGER, total_tracks INTEGER, new_tracks INTEGER,"
         " note TEXT, state TEXT NOT NULL DEFAULT 'new', analyzed INTEGER NOT NULL DEFAULT 0)"
     )
+    # Artistes au nom ambigu que tu as confirmés via /verifier.
+    conn.execute("CREATE TABLE IF NOT EXISTS verified (itunes_id INTEGER PRIMARY KEY, verified_on TEXT)")
     # Noms d'artistes pour lesquels on peut chercher les featurings sans
     # risquer de confondre avec un homonyme (voir _feature_name_is_reliable).
     conn.execute(
@@ -257,6 +259,8 @@ def add_artist(name: str, itunes_id: int, matched_name: str, forced: bool) -> bo
     Retourne False si le nom était déjà dans le fichier.
     """
     name = name.strip()
+    if forced:
+        mark_verified(itunes_id)  # ID choisi explicitement : rien à revérifier
     new_line = f"{name} | {itunes_id}" if forced else name
     with _artists_lock:
         lines = _read_lines()
@@ -575,6 +579,124 @@ def prepare_add(text: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Récupération des sorties
 # --------------------------------------------------------------------------- #
+
+# --------------------------------------------------------------------------- #
+# Vérification des artistes au nom ambigu (/verifier)
+# --------------------------------------------------------------------------- #
+
+def mark_verified(itunes_id: int) -> None:
+    conn = _db()
+    conn.execute("INSERT OR REPLACE INTO verified VALUES (?, ?)", (itunes_id, _today().isoformat()))
+    conn.commit()
+    conn.close()
+
+
+def followed_name(itunes_id: int) -> str | None:
+    """Nom tel qu'écrit dans artists.txt pour cet ID."""
+    conn = _db()
+    row = conn.execute("SELECT name FROM artists WHERE itunes_id = ? ORDER BY name", (itunes_id,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def artist_overview(artist_id: int) -> dict:
+    """Genre, lien et dernière sortie d'un artiste, en un seul appel."""
+    time.sleep(REQUEST_DELAY_S)
+    data = _get_json(
+        ITUNES_LOOKUP,
+        {"id": artist_id, "entity": "album", "limit": ALBUMS_PER_ARTIST, "country": COUNTRY},
+    )
+    info: dict = {"id": artist_id, "name": "?", "genre": "?", "url": "", "last": "aucune sortie"}
+    latest: tuple[str, str] | None = None
+    for item in data.get("results", []):
+        if item.get("wrapperType") == "artist":
+            info.update(
+                name=item.get("artistName", "?"),
+                genre=item.get("primaryGenreName", "?"),
+                url=item.get("artistLinkUrl", ""),
+            )
+        elif (
+            item.get("wrapperType") == "collection" and item.get("releaseDate")
+            and (latest is None or item["releaseDate"] > latest[0])
+        ):
+            latest = (item["releaseDate"], item.get("collectionName", "?"))
+    if latest:
+        info["last"] = f"{latest[1]} ({latest[0][8:10]}/{latest[0][5:7]}/{latest[0][:4]})"
+    return info
+
+
+def ambiguous_artists() -> list[dict]:
+    """
+    Artistes suivis dont le nom est porté par plusieurs artistes chez Apple et
+    que tu n'as pas encore confirmés. Les lignes `Nom | id` de artists.txt et
+    les artistes ajoutés par lien ou par choix d'homonyme comptent comme confirmés.
+    """
+    forced = {
+        ln.partition("|")[0].strip() for ln in read_artist_names() if ln.partition("|")[2].strip().isdigit()
+    }
+    conn = _db()
+    rows = conn.execute(
+        "SELECT a.name, a.itunes_id, a.matched_name FROM artists a"
+        " LEFT JOIN verified v ON v.itunes_id = a.itunes_id"
+        " WHERE a.itunes_id IS NOT NULL AND v.itunes_id IS NULL ORDER BY a.name"
+    ).fetchall()
+    conn.close()
+    out: list[dict] = []
+    seen_ids: set[int] = set()
+    for name, aid, matched in rows:
+        if aid in seen_ids or name in forced:
+            continue
+        seen_ids.add(aid)
+        try:
+            if _feature_name_is_reliable(aid, matched or name):
+                continue
+            overview = artist_overview(aid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Vérification de %s impossible : %s", name, exc)
+            continue
+        out.append({**overview, "followed": name})
+    return out
+
+
+def homonyms(artist_id: int) -> list[dict]:
+    """Les autres artistes du même nom chez Apple, avec leur dernière sortie."""
+    name = followed_name(artist_id) or ""
+    key = _cmp_key(name)
+    cands = [c for c in search_artists(name, limit=6) if c["id"] != artist_id and _cmp_key(c["name"]) == key]
+    out = []
+    for c in cands[:4]:
+        try:
+            out.append({**artist_overview(c["id"]), "id": c["id"]})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Aperçu de %s impossible : %s", c["name"], exc)
+    return out
+
+
+def switch_artist(old_id: int, new_id: int, new_name: str) -> str | None:
+    """
+    Remplace l'artiste suivi par son homonyme : `Nom | nouvel_id` dans
+    artists.txt, et les sorties non triées de l'ancien quittent /trier.
+    """
+    name = followed_name(old_id)
+    if name is None:
+        return None
+    conn = _db()
+    conn.execute("DELETE FROM artists WHERE name = ?", (name,))
+    conn.execute("DELETE FROM releases WHERE artist_id = ? AND state = ?", (old_id, STATE_NEW))
+    conn.execute("DELETE FROM feature_names WHERE itunes_id = ?", (old_id,))
+    conn.commit()
+    conn.close()
+    add_artist(name, new_id, new_name, forced=True)
+    return name
+
+
+def drop_pending_of(artist_id: int) -> None:
+    """Sorties non triées d'un artiste qu'on ne suit plus : hors de /trier."""
+    conn = _db()
+    conn.execute("DELETE FROM releases WHERE artist_id = ? AND state = ?", (artist_id, STATE_NEW))
+    conn.commit()
+    conn.close()
+
 
 _EP_TAIL_RE = re.compile(r"(?:\s|[\(\[])E\.?P\.?[\)\]]?$", re.I)
 

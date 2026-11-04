@@ -334,6 +334,7 @@ HELP_TEXT = (
     "/ajouter <i>artiste</i> — ajoute un artiste (nom, <code>Nom | id</code> ou lien Apple Music)\n"
     "/retirer <i>artiste</i> — retire un artiste\n"
     "/artistes — liste des artistes suivis\n"
+    "/verifier — vérifier les artistes au nom ambigu\n"
     "/jour · /semaine · /rattrapage <i>n</i> — récaps à la demande\n"
     "/actualiser — relit artists.txt"
 )
@@ -620,6 +621,108 @@ async def cmd_retirer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _send(context.bot, "Aucun artiste suivi ne correspond. /artistes pour voir la liste.")
 
 
+# --------------------------------------------------------------------------- #
+# /verifier : artistes dont le nom est porté par plusieurs artistes chez Apple
+# --------------------------------------------------------------------------- #
+
+def _artist_card(info: dict, followed: str) -> str:
+    name = html.escape(info["name"])
+    link = f'<a href="{html.escape(info["url"], quote=True)}">{name}</a>' if info.get("url") else name
+    return (
+        f"<b>{html.escape(followed)}</b> → {link} — {html.escape(info['genre'])}\n"
+        f"<i>Dernière sortie : {html.escape(info['last'])}</i>"
+    )
+
+
+def _verify_keyboard(artist_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [_btn("✅ C'est le bon", f"vf:ok:{artist_id}"), _btn("🔄 Changer", f"vf:ch:{artist_id}")],
+            [_btn("🗑 Ne plus suivre", f"vf:rm:{artist_id}")],
+        ]
+    )
+
+
+async def cmd_verifier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "⏳ Recherche des artistes au nom ambigu (quelques minutes la première fois)…"
+    )
+    try:
+        items = await asyncio.to_thread(radar.ambiguous_artists)
+    except Exception as exc:  # noqa: BLE001
+        await _notify_error(context.bot, "/verifier", exc)
+        return
+    if not items:
+        await _send(context.bot, "✅ Aucun artiste à vérifier.")
+        return
+    await _send(
+        context.bot,
+        f"🔎 <b>{len(items)} artiste(s) à vérifier</b> : plusieurs artistes portent ce nom chez Apple. "
+        "Vérifie que le bot suit le bon (genre, dernière sortie, lien).",
+    )
+    for info in items:
+        await _send(context.bot, _artist_card(info, info["followed"]), _verify_keyboard(info["id"]))
+        await asyncio.sleep(SEND_PAUSE_S)
+
+
+async def on_verify_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """vf:ok|ch|rm:<id>  ·  vf:pk:<jeton>:<n° d'homonyme>."""
+    q = update.callback_query
+    if not _authorized(q):
+        await _answer(q)
+        return
+    parts = q.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "pk" and len(parts) == 4:
+        data = _adds(context).pop(parts[2], None)
+        if data is None:
+            await _answer(q, "Expiré (le bot a redémarré). Refais /verifier.", show_alert=True)
+            return
+        try:
+            cand = data["cands"][int(parts[3])]
+        except (IndexError, ValueError):
+            await _answer(q)
+            return
+        name = await asyncio.to_thread(radar.switch_artist, data["old"], cand["id"], cand["name"])
+        await _edit(q, f"🔄 <b>{html.escape(name or '?')}</b> suit maintenant :\n{_artist_card(cand, name or '?')}", None)
+        await _answer(q, "Artiste changé")
+        return
+
+    try:
+        artist_id = int(parts[2])
+    except (IndexError, ValueError):
+        await _answer(q)
+        return
+    name = await asyncio.to_thread(radar.followed_name, artist_id)
+    if name is None:
+        await _edit(q, "Cet artiste n'est plus suivi.", None)
+        await _answer(q)
+        return
+
+    if action == "ok":
+        await asyncio.to_thread(radar.mark_verified, artist_id)
+        await _edit(q, f"✅ <b>{html.escape(name)}</b> : confirmé.", None)
+    elif action == "rm":
+        await asyncio.to_thread(radar.remove_artist, name)
+        await asyncio.to_thread(radar.drop_pending_of, artist_id)
+        await _edit(q, f"🗑 <b>{html.escape(name)}</b> n'est plus suivi.", None)
+    elif action == "ch":
+        await _answer(q, "Recherche des homonymes…")
+        cands = await asyncio.to_thread(radar.homonyms, artist_id)
+        if not cands:
+            await _edit(q, f"Aucun autre « {html.escape(name)} » trouvé chez Apple.", _verify_keyboard(artist_id))
+            return
+        token = _remember(context, {"old": artist_id, "cands": cands})
+        lines = [f"Quel « {html.escape(name)} » veux-tu suivre ?"]
+        lines += [f"{i}. {_artist_card(c, name)}" for i, c in enumerate(cands, 1)]
+        buttons = [_btn(str(i), f"vf:pk:{token}:{i - 1}") for i in range(1, len(cands) + 1)]
+        buttons.append(_btn("↩️ Garder l'actuel", f"vf:ok:{artist_id}"))
+        await _edit(q, "\n".join(lines), InlineKeyboardMarkup([buttons]))
+        return
+    await _answer(q)
+
+
 async def cmd_artistes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     needle = " ".join(context.args).strip() if context.args else ""
     names = await asyncio.to_thread(radar.artists_matching, needle)
@@ -642,6 +745,7 @@ async def _post_init(app: Application) -> None:
             BotCommand("ajouter", "Ajouter un artiste"),
             BotCommand("retirer", "Retirer un artiste"),
             BotCommand("artistes", "Artistes suivis"),
+            BotCommand("verifier", "Vérifier les artistes au nom ambigu"),
             BotCommand("jour", "Sorties du jour"),
             BotCommand("semaine", "Récap de la semaine"),
             BotCommand("rattrapage", "Sorties des n derniers jours"),
@@ -683,6 +787,7 @@ COMMANDS = {
     "ajouter": cmd_ajouter,
     "retirer": cmd_retirer,
     "artistes": cmd_artistes,
+    "verifier": cmd_verifier,
     "aide": cmd_aide,
     "start": cmd_aide,
 }
@@ -716,6 +821,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(on_card_button, pattern=r"^r:"))
     app.add_handler(CallbackQueryHandler(on_queue_button, pattern=r"^q:"))
     app.add_handler(CallbackQueryHandler(on_add_button, pattern=r"^ad:"))
+    app.add_handler(CallbackQueryHandler(on_verify_button, pattern=r"^vf:"))
     app.add_error_handler(_on_error)
 
     jq = app.job_queue

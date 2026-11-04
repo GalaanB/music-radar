@@ -32,6 +32,7 @@ remplace la veille manuelle par un message quotidien trié.
   tri déjà fait est conservé.
 - **Gestion des artistes depuis Telegram** : `/ajouter` accepte un nom ou le
   lien de la page Apple Music, et propose des boutons en cas d'homonymes.
+  `/verifier` liste les artistes au nom ambigu pour confirmer ou changer d'homonyme.
 - **Erreurs signalées sur Telegram**, token masqué, et logs persistants.
 
 ## Commandes
@@ -42,6 +43,7 @@ remplace la veille manuelle par un message quotidien trié.
 | `/ajouter <nom ou lien>` | Suivre un artiste (`Nom`, `Nom \| id` ou URL Apple Music) |
 | `/retirer <nom>` | Ne plus suivre un artiste |
 | `/artistes [filtre]` | Artistes suivis |
+| `/verifier` | Vérifier les artistes dont le nom est porté par plusieurs artistes chez Apple |
 | `/jour`, `/semaine` | Récaps à la demande |
 | `/rattrapage <n>` | Sorties des n derniers jours |
 | `/actualiser` | Relire `artists.txt` |
@@ -128,7 +130,7 @@ pytest
 ruff check .
 ```
 
-109 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
+115 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues
