@@ -160,6 +160,12 @@ def _db() -> sqlite3.Connection:
         " track_count INTEGER, total_tracks INTEGER, new_tracks INTEGER,"
         " note TEXT, state TEXT NOT NULL DEFAULT 'new', analyzed INTEGER NOT NULL DEFAULT 0)"
     )
+    # Noms d'artistes pour lesquels on peut chercher les featurings sans
+    # risquer de confondre avec un homonyme (voir _feature_name_is_reliable).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS feature_names ("
+        " itunes_id INTEGER PRIMARY KEY, reliable INTEGER, checked_on TEXT)"
+    )
     # Titres des albums déjà analysés (sert de cache et de base de comparaison).
     conn.execute(
         "CREATE TABLE IF NOT EXISTS tracks ("
@@ -665,7 +671,50 @@ def _credited(track_name: str, artist_name: str) -> set[str]:
     return names
 
 
-def _fetch_features(artist_id: int, name: str, since: date, known_albums: set[int]) -> list[Release]:
+FEATURE_NAME_RECHECK_DAYS = 30
+
+
+def _feature_name_is_reliable(artist_id: int, name: str) -> bool:
+    """
+    Un featuring n'est repéré que par le nom écrit dans le titre (« feat. SAM ») :
+    Apple ne donne pas l'ID de l'invité. Si plusieurs artistes portent ce nom
+    chez Apple (SAM, Luv, Dau…), on ne peut pas savoir lequel est crédité : on
+    ne cherche pas ses featurings. Vérifié une fois, puis tous les 30 jours.
+    """
+    conn = _db()
+    row = conn.execute(
+        "SELECT reliable, checked_on FROM feature_names WHERE itunes_id = ?", (artist_id,)
+    ).fetchone()
+    conn.close()
+    if row and date.fromisoformat(row[1]) > _today() - timedelta(days=FEATURE_NAME_RECHECK_DAYS):
+        return bool(row[0])
+
+    time.sleep(REQUEST_DELAY_S)
+    data = _get_json(ITUNES_SEARCH, {"term": name, "entity": "musicArtist", "limit": 25, "country": COUNTRY})
+    key = _cmp_key(name)
+    same_name = {
+        res.get("artistId") for res in data.get("results", []) if _cmp_key(res.get("artistName", "")) == key
+    }
+    reliable = same_name <= {artist_id}
+    conn = _db()
+    conn.execute(
+        "INSERT OR REPLACE INTO feature_names VALUES (?, ?, ?)",
+        (artist_id, int(reliable), _today().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    if not reliable:
+        logger.info("Featurings de %s non cherchés : %d artistes portent ce nom", name, len(same_name))
+    return reliable
+
+
+def _fetch_features(
+    artist_id: int,
+    name: str,
+    since: date,
+    known_albums: set[int],
+    known_titles: set[tuple[str, str]] | None = None,
+) -> list[Release]:
     """
     Titres où l'artiste suivi est crédité, mais qui sont sur le projet d'un
     autre artiste (ex. « Sensible (feat. Josman) » sur l'album de Ronisia).
@@ -687,6 +736,8 @@ def _fetch_features(artist_id: int, name: str, since: date, known_albums: set[in
                 continue
             if key not in _credited(t.get("trackName", ""), t.get("artistName", "")):
                 continue  # le nom apparaît dans le titre sans être un crédit
+            if known_titles and (_cmp_key(t.get("artistName", "")), _norm_title(t.get("trackName", ""))) in known_titles:
+                continue  # déjà sorti en single (et donc déjà notifié comme tel)
             released = datetime.fromisoformat(t["releaseDate"].replace("Z", "+00:00")).astimezone(TZ).date()
             if released < since:
                 continue
@@ -750,21 +801,45 @@ def _scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
                 found[rel.album_id] = rel
 
     if FEATURES_ENABLED:
-        known_albums = set(found) | {rel.album_id for rels in catalog.values() for rel in rels}
+        everything = [rel for rels in catalog.values() for rel in rels] + _all_releases()
+        known_albums = set(found) | {rel.album_id for rel in everything}
+        known_titles = {
+            (_cmp_key(rel.artist), _norm_title(rel.title))
+            for rel in everything if rel.kind != KIND_FEATURING
+        }
+        unreliable: list[int] = []
         for aid in artist_ids:
-            time.sleep(REQUEST_DELAY_S)
             try:
-                for rel in _fetch_features(aid, names[aid], since, known_albums):
+                if not _feature_name_is_reliable(aid, names[aid]):
+                    unreliable.append(aid)
+                    continue
+                time.sleep(REQUEST_DELAY_S)
+                for rel in _fetch_features(aid, names[aid], since, known_albums, known_titles):
                     found.setdefault(rel.album_id, rel)
             except Exception as exc:  # noqa: BLE001
                 errors += 1
                 logger.error("Featurings de %s : échec de la recherche (%s)", names[aid], exc)
+
+        _drop_unreliable_features(unreliable)
 
     if errors:
         logger.warning("%d recherche(s) en erreur sur %d artistes", errors, len(artist_ids))
     unique = _dedupe(list(found.values()))
     ordered = sorted(unique, key=lambda r: (r.release_date, r.artist.casefold()), reverse=True)
     return ordered, catalog
+
+
+def _drop_unreliable_features(artist_ids: list[int]) -> None:
+    """Retire de la file les featurings non triés d'artistes au nom ambigu."""
+    if not artist_ids:
+        return
+    conn = _db()
+    conn.executemany(
+        "DELETE FROM releases WHERE kind = ? AND artist_id = ? AND state = ?",
+        [(KIND_FEATURING, aid, STATE_NEW) for aid in artist_ids],
+    )
+    conn.commit()
+    conn.close()
 
 
 def _today() -> date:

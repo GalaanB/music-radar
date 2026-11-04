@@ -97,3 +97,54 @@ def test_feature_card_and_analysis(josman):
     assert "Featuring" in radar.card_text(feat) and "Sensation" in radar.card_text(feat)
     radar.finalize(p)
     assert radar.daily_batch().releases == []  # notifié une seule fois
+
+
+# --- homonymes et doublons -----------------------------------------------------
+
+def follow(name, artist_id):
+    conn = radar._db()
+    conn.execute("INSERT INTO artists VALUES (?, ?, ?)", (name, artist_id, name))
+    conn.commit()
+    conn.close()
+
+
+def test_no_feature_search_when_several_artists_share_the_name(itunes):
+    follow("SAM", 7)
+    itunes.albums = {7: []}
+    itunes.search = {"SAM": [
+        {"artistId": 7, "artistName": "SAM"},
+        {"artistId": 8, "artistName": "Sam"},  # un autre Sam
+    ]}
+    itunes.songs = {"SAM": [song(700, "Love (feat. Sam)", "Chanteuse Pop", "Pop Album", 70, days_ago=2)]}
+    assert 700 not in scanned()
+    assert not any(p.get("entity") == "song" for _, p in itunes.calls)
+
+
+def test_wrong_features_already_waiting_are_removed_but_your_choices_kept(itunes):
+    follow("SAM", 7)
+    itunes.albums = {7: []}
+    itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}, {"artistId": 8, "artistName": "Sam"}]}
+    from conftest import release
+    radar.save_releases([
+        release(701, "Faux (feat. Sam)", radar.KIND_FEATURING, artist_id=7),
+        release(702, "Gardé (feat. Sam)", radar.KIND_FEATURING, artist_id=7, state=radar.STATE_ADDED),
+    ])
+    radar.catchup_batch(14)
+    assert radar.get_release(701) is None
+    assert radar.get_release(702).state == radar.STATE_ADDED
+
+
+def test_name_check_is_cached(josman):
+    josman.search = {"Josman": [{"artistId": 1, "artistName": "Josman"}]}
+    radar.catchup_batch(14)
+    radar.catchup_batch(14)
+    checks = [p for _, p in josman.calls if p.get("entity") == "musicArtist"]
+    assert len(checks) == 1
+
+
+def test_feature_already_released_as_single_is_not_repeated(josman):
+    # « Boussole » est d'abord sorti en single (notifié), puis sur l'album de l'artiste invitant.
+    from conftest import release
+    radar.save_releases([release(80, "Boussole (feat. Josman)", "Single", days_ago=20, artist="Autre", artist_id=1)])
+    josman.songs = {"Josman": [song(800, "Boussole (feat. Josman)", "Autre", "Grand Album", 81, days_ago=2)]}
+    assert 800 not in scanned()

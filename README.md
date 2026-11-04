@@ -128,7 +128,7 @@ pytest
 ruff check .
 ```
 
-105 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
+109 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues
@@ -136,7 +136,9 @@ Ils sont lancés par GitHub Actions à chaque push.
 - L'API iTunes peut afficher une sortie avec plusieurs jours de retard sur
   l'appli Music : elle arrive alors dans le récap qui suit son apparition.
 - Les featurings sont repérés par les crédits du titre (« feat. X ») : un
-  invité non crédité dans le titre ni dans l'interprète n'est pas trouvé.
+  invité non crédité dans le titre ni dans l'interprète n'est pas trouvé, et
+  ceux des artistes dont le nom est porté par plusieurs artistes chez Apple
+  (SAM, Luv…) ne sont pas cherchés, pour éviter les confusions.
 - Le bot ne connaît pas l'historique d'écoute : « déjà sorti » veut dire « déjà
   publié par l'artiste », pas « déjà écouté ».
 - Ajouter automatiquement à une playlist Apple Music demanderait l'API Apple
