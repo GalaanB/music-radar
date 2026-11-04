@@ -1,0 +1,11 @@
+# Un artiste par ligne. Les lignes qui commencent par # sont ignorées.
+# En cas d'homonyme, force l'artiste avec son ID Apple Music :
+#   Nom | 123456789
+# (l'ID est le nombre à la fin de l'URL music.apple.com/.../artist/nom/123456789)
+#
+# Copie ce fichier en artists.txt. Ensuite, le plus simple est de gérer la
+# liste depuis Telegram : /ajouter, /retirer, /artistes.
+Damso
+Drake
+Laylow
+Travis Scott

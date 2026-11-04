@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP", "SIM", "BLE", "RUF100"]
+ignore = ["E501", "UP037"]

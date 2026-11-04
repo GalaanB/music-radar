@@ -1,0 +1,3 @@
+# Les scripts gardent les fins de ligne de leur système, quel que soit le PC.
+*.sh  text eol=lf
+*.cmd text eol=crlf

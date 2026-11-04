@@ -1,0 +1,14 @@
+# Secrets : token du bot et chat ID. Ne jamais publier.
+.env
+
+# Données propres à chaque installation
+data/
+artists.txt
+
+# Python / outils
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/

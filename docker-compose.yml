@@ -1,0 +1,16 @@
+services:
+  music-radar:
+    build: .
+    container_name: music-radar
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Paris
+      - ARTISTS_FILE=/app/artists.txt
+      - RADAR_DATA_DIR=/app/data
+    volumes:
+      # Modifie artists.txt à chaud, puis /actualiser dans Telegram.
+      - ./artists.txt:/app/artists.txt
+      # Base SQLite : IDs d'artistes + sorties déjà notifiées.
+      - ./data:/app/data
