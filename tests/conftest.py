@@ -51,13 +51,15 @@ class FakeItunes:
         self.albums: dict[int, list[dict]] = {}       # artist_id -> fiches "collection"
         self.tracks: dict[int, list[str]] = {}        # album_id -> titres
         self.search: dict[str, list[dict]] = {}       # terme -> résultats "musicArtist"
+        self.songs: dict[str, list[dict]] = {}        # terme -> résultats "song" (featurings)
         self.artists: dict[int, dict] = {}            # artist_id -> fiche "artist"
         self.calls: list[tuple[str, dict]] = []
 
     def __call__(self, url: str, params: dict) -> dict:
         self.calls.append((url, dict(params)))
         if url == radar.ITUNES_SEARCH:
-            return {"results": self.search.get(params["term"], [])}
+            source = self.songs if params.get("entity") == "song" else self.search
+            return {"results": source.get(params["term"], [])}
         entity = params.get("entity")
         if entity == "album":
             return {"results": [{"wrapperType": "artist"}, *self.albums.get(params["id"], [])]}
@@ -94,6 +96,32 @@ def collection(
         "artworkUrl100": f"https://img/{cid}/100x100bb.jpg",
         "trackCount": tracks,
         "collectionExplicitness": "explicit" if explicit else "cleaned",
+    }
+
+
+def song(
+    track_id: int,
+    track: str,
+    artist: str,
+    album: str,
+    album_id: int,
+    days_ago: int = 0,
+    artist_id: int = 999,
+) -> dict:
+    """Résultat "track" d'une recherche iTunes (entity=song)."""
+    day = radar._today() - timedelta(days=days_ago)
+    return {
+        "wrapperType": "track",
+        "trackId": track_id,
+        "trackName": track,
+        "artistName": artist,
+        "artistId": artist_id,
+        "collectionId": album_id,
+        "collectionName": album,
+        "releaseDate": f"{day.isoformat()}T07:00:00Z",
+        "trackViewUrl": f"https://music.apple.com/fr/album/{album_id}?i={track_id}",
+        "artworkUrl100": f"https://img/{album_id}/100x100bb.jpg",
+        "trackExplicitness": "explicit",
     }
 
 

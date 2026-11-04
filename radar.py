@@ -53,6 +53,10 @@ ALBUMS_PER_ARTIST = 200
 # Le récap quotidien regarde les N derniers jours (hors sorties déjà notifiées) :
 # Apple affiche parfois une sortie avec plusieurs jours de retard.
 DAILY_LOOKBACK_DAYS = int(os.getenv("DAILY_LOOKBACK_DAYS", "14"))
+# Featurings sur l'album d'un autre artiste : 1 recherche de plus par artiste
+# suivi (le scan dure environ deux fois plus longtemps). FEATURES=0 la désactive.
+FEATURES_ENABLED = os.getenv("FEATURES", "1") == "1"
+KIND_FEATURING = "Featuring"
 
 # Analyse de nouveauté (1 appel iTunes de plus par album/EP à analyser).
 # NOVELTY=0 la désactive si jamais elle se comportait mal.
@@ -642,6 +646,71 @@ def _fetch_artist_releases(itunes_id: int) -> list[Release]:
     return releases
 
 
+_FEAT_CREDITS_RE = re.compile(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^\)\]]+)[\)\]]", re.I)
+_FEAT_TAIL_CREDITS_RE = re.compile(r"\s(?:feat\.?|ft\.?|featuring)\s+(.+)$", re.I)
+_CREDIT_SPLIT_RE = re.compile(r"\s*(?:,|&|/|\+|\bx\b|\bet\b|\band\b)\s*", re.I)
+
+
+def _credited(track_name: str, artist_name: str) -> set[str]:
+    """Clés de tous les artistes crédités sur un titre (interprète + feat.)."""
+    parts = [artist_name]
+    parts += _FEAT_CREDITS_RE.findall(track_name)
+    parts += _FEAT_TAIL_CREDITS_RE.findall(_FEAT_CREDITS_RE.sub("", track_name))
+    names: set[str] = set()
+    for part in parts:
+        names.add(_cmp_key(part))  # crédit entier : « Tyler, The Creator », « PUSH & GIO »
+        for name in _CREDIT_SPLIT_RE.split(part):
+            if name.strip():
+                names.add(_cmp_key(name))
+    return names
+
+
+def _fetch_features(artist_id: int, name: str, since: date, known_albums: set[int]) -> list[Release]:
+    """
+    Titres où l'artiste suivi est crédité, mais qui sont sur le projet d'un
+    autre artiste (ex. « Sensible (feat. Josman) » sur l'album de Ronisia).
+    Apple ne les liste pas dans les sorties de l'artiste invité. Les singles en
+    featuring y sont déjà : on ne garde que les titres d'albums et d'EP.
+    """
+    data = _get_json(
+        ITUNES_SEARCH,
+        {"term": name, "entity": "song", "limit": 200, "country": COUNTRY},
+    )
+    key = _cmp_key(name)
+    out: list[Release] = []
+    for t in data.get("results", []):
+        try:
+            if t.get("wrapperType") != "track" or t.get("artistId") == artist_id:
+                continue  # titre de l'artiste lui-même : déjà dans ses sorties
+            collection_name = t.get("collectionName", "")
+            if t.get("collectionId") in known_albums or collection_name.endswith(" - Single"):
+                continue
+            if key not in _credited(t.get("trackName", ""), t.get("artistName", "")):
+                continue  # le nom apparaît dans le titre sans être un crédit
+            released = datetime.fromisoformat(t["releaseDate"].replace("Z", "+00:00")).astimezone(TZ).date()
+            if released < since:
+                continue
+            kind, album = _kind_and_title(collection_name)
+            out.append(
+                Release(
+                    album_id=t["trackId"],
+                    artist=t.get("artistName", "?"),
+                    title=t["trackName"],
+                    kind=KIND_FEATURING,
+                    release_date=released,
+                    url=t.get("trackViewUrl", ""),
+                    artist_id=artist_id,
+                    cover=re.sub(r"/\d+x\d+bb", "/300x300bb", t.get("artworkUrl100", "")),
+                    explicit=t.get("trackExplicitness") == "explicit",
+                    note=f"🎤 {name} en featuring · {kind.lower()} « {album} »",
+                    analyzed=True,
+                )
+            )
+        except (KeyError, ValueError) as exc:
+            logger.warning("Titre ignoré (%s) : %s", exc, t.get("trackName"))
+    return out
+
+
 def _scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
     """
     Parcourt tous les artistes résolus (~3 s par artiste pour respecter la
@@ -653,9 +722,12 @@ def _scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
     conn = _db()
     # DISTINCT : deux lignes d'artists.txt peuvent pointer vers le même artiste
     # (ex. "Kanye West" et "Ye") ; inutile de l'interroger deux fois.
-    artist_ids = [
-        r[0] for r in conn.execute("SELECT DISTINCT itunes_id FROM artists WHERE itunes_id IS NOT NULL")
-    ]
+    names: dict[int, str] = {}
+    for aid, matched in conn.execute(
+        "SELECT itunes_id, matched_name FROM artists WHERE itunes_id IS NOT NULL ORDER BY name"
+    ):
+        names.setdefault(aid, matched)
+    artist_ids = list(names)
     conn.close()
 
     if not artist_ids:
@@ -677,8 +749,19 @@ def _scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
             if rel.release_date >= since:
                 found[rel.album_id] = rel
 
+    if FEATURES_ENABLED:
+        known_albums = set(found) | {rel.album_id for rels in catalog.values() for rel in rels}
+        for aid in artist_ids:
+            time.sleep(REQUEST_DELAY_S)
+            try:
+                for rel in _fetch_features(aid, names[aid], since, known_albums):
+                    found.setdefault(rel.album_id, rel)
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.error("Featurings de %s : échec de la recherche (%s)", names[aid], exc)
+
     if errors:
-        logger.warning("%d artiste(s) en erreur sur %d", errors, len(artist_ids))
+        logger.warning("%d recherche(s) en erreur sur %d artistes", errors, len(artist_ids))
     unique = _dedupe(list(found.values()))
     ordered = sorted(unique, key=lambda r: (r.release_date, r.artist.casefold()), reverse=True)
     return ordered, catalog
@@ -917,6 +1000,8 @@ def analyze_release(r: Release, catalog: dict[int, list[Release]]) -> None:
       Si aucune référence n'existe, aucune affirmation n'est faite.
     """
     r.analyzed = True
+    if r.kind == KIND_FEATURING:
+        return  # sa note (« 🎤 X en featuring · album « Y » ») est posée au scan
     base_title, is_edition = _split_edition(r.title)
 
     if r.is_variant:

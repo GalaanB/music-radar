@@ -1,0 +1,99 @@
+"""Featurings sur le projet d'un autre artiste (absents des sorties de l'invité)."""
+
+import pytest
+
+import radar
+from conftest import collection, song
+
+
+@pytest.fixture
+def josman(itunes):
+    conn = radar._db()
+    conn.execute("INSERT INTO artists VALUES ('Josman', 1, 'Josman')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {1: [collection(10, "TOUS MES DIAMANTS - Single", days_ago=4, artist="Josman")]}
+    return itunes
+
+
+def scanned(days=14):
+    return {r.album_id: r for r in radar.catchup_batch(days).releases}
+
+
+def test_feature_on_another_artists_album_is_found(josman):
+    josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
+    rels = scanned()
+    feat = rels[500]
+    assert feat.kind == radar.KIND_FEATURING and feat.artist == "Ronisia"
+    assert feat.note == "🎤 Josman en featuring · album « Sensation »"
+    assert feat.url.endswith("?i=500")
+    assert 10 in rels  # les sorties habituelles restent là
+
+
+@pytest.mark.parametrize("track", [
+    song(501, "Josman Freestyle", "Autre", "Mixtape", 51),          # nom dans le titre, pas crédité
+    song(502, "Boussole (feat. Josman)", "Autre", "Boussole - Single", 52),  # single : déjà listé
+    song(503, "Vieux (feat. Josman)", "Autre", "Ancien", 53, days_ago=60),   # trop ancien
+    song(504, "Intro", "Josman", "J.O.$", 54, artist_id=1),          # son propre album
+])
+def test_irrelevant_tracks_are_skipped(josman, track):
+    josman.songs = {"Josman": [track]}
+    assert track["trackId"] not in scanned()
+
+
+def test_credits_with_several_artists_and_commas():
+    assert radar._cmp_key("Josman") in radar._credited("Song (feat. Youssoupha, Josman & Kalash)", "X")
+    assert radar._cmp_key("Josman") in radar._credited("Song", "Ronisia & Josman")
+    assert radar._cmp_key("Tyler, The Creator") in radar._credited("Song (feat. Tyler, The Creator)", "X")
+    assert radar._cmp_key("Josman") in radar._credited("Song feat. Josman", "X")
+    assert radar._cmp_key("Josman") not in radar._credited("Josman Freestyle", "X")
+
+
+def test_same_feature_found_through_two_followed_artists_is_kept_once(josman):
+    conn = radar._db()
+    conn.execute("INSERT INTO artists VALUES ('Kalash', 2, 'Kalash')")
+    conn.commit()
+    conn.close()
+    track = song(600, "Titre (feat. Josman & Kalash)", "Autre", "Album", 60, days_ago=2)
+    josman.songs = {"Josman": [track], "Kalash": [dict(track)]}
+    assert [r.album_id for r in radar.catchup_batch(14).releases].count(600) == 1
+
+
+def test_feature_on_a_followed_artists_album_is_not_duplicated(josman):
+    conn = radar._db()
+    conn.execute("INSERT INTO artists VALUES ('Ronisia', 3, 'Ronisia')")
+    conn.commit()
+    conn.close()
+    josman.albums[3] = [collection(50, "Sensation", days_ago=6, artist="Ronisia")]
+    josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6, artist_id=3)]}
+    rels = scanned()
+    assert 50 in rels and 500 not in rels  # l'album de Ronisia suffit
+
+
+def test_failed_search_does_not_break_the_scan(josman, monkeypatch):
+    real = radar._get_json
+
+    def flaky(url, params):
+        if params.get("entity") == "song":
+            raise radar.requests.ConnectionError("rate limit")
+        return real(url, params)
+
+    monkeypatch.setattr(radar, "_get_json", flaky)
+    assert 10 in scanned()
+
+
+def test_features_can_be_disabled(josman, monkeypatch):
+    monkeypatch.setattr(radar, "FEATURES_ENABLED", False)
+    josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
+    assert 500 not in scanned()
+    assert not any(p.get("entity") == "song" for _, p in josman.calls)
+
+
+def test_feature_card_and_analysis(josman):
+    josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
+    p = radar.prepare(radar.catchup_batch(14))
+    feat = next(r for r in p.to_show if r.album_id == 500)
+    assert feat.note.startswith("🎤")  # l'analyse ne l'écrase pas
+    assert "Featuring" in radar.card_text(feat) and "Sensation" in radar.card_text(feat)
+    radar.finalize(p)
+    assert radar.daily_batch().releases == []  # notifié une seule fois

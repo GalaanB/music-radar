@@ -286,7 +286,7 @@ async def job_startup(context: ContextTypes.DEFAULT_TYPE) -> None:
 # Commandes : récaps
 # --------------------------------------------------------------------------- #
 
-SCAN_WAIT = "⏳ Scan en cours (≈ 10 min, un peu plus s'il y a des albums à analyser)…"
+SCAN_WAIT = "⏳ Scan en cours (≈ 20 min avec la recherche des featurings)…"
 
 
 async def cmd_jour(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -313,7 +313,7 @@ async def cmd_rattrapage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except ValueError:
             await update.message.reply_text("Usage : /rattrapage 30")
             return
-    await update.message.reply_text(f"⏳ Scan des {days} derniers jours (≈ 10 min + analyse des albums)…")
+    await update.message.reply_text(f"⏳ Scan des {days} derniers jours (≈ 20 min avec la recherche des featurings)…")
     try:
         await do_catchup(context.bot, days)
     except Exception as exc:  # noqa: BLE001

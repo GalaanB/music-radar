@@ -22,6 +22,9 @@ remplace la veille manuelle par un message quotidien trié.
   comparée aux singles déjà sortis et, pour une réédition, à l'album d'origine
   (« 🆕 8 inédits sur 14 · 6 déjà sortis en single », « ♻️ réédition · aucun
   inédit »). Les rééditions sans aucun titre nouveau sont mises de côté.
+- **Featurings sur le projet d'un autre artiste** : Apple ne les range pas dans
+  les sorties de l'artiste invité. Le bot les cherche en plus et les signale
+  (« 🎤 Josman en featuring · album « Sensation » »).
 - **Versions alternatives** (slowed, sped up, instru, remix…) repérées et
   rattachées à leur original : « 🔁 version slowed de « Album » ».
 - **Dédoublonnage** : Apple publie souvent plusieurs fiches pour une même sortie
@@ -110,6 +113,7 @@ ne touche jamais au token, à la liste d'artistes ni à la base.
 | `DAILY_TIME`, `WEEKLY_TIME` | `09:00` | Heures d'envoi (Europe/Paris) |
 | `SEND_EMPTY_DAILY` | `0` | `1` = message « Rien de nouveau » les jours vides |
 | `DAILY_LOOKBACK_DAYS` | `14` | Jours couverts par le récap quotidien |
+| `FEATURES` | `1` | Recherche des featurings (double la durée du scan, ~20 min) |
 | `CARDS_MAX` | `12` | Au-delà : liste compacte + `/trier` |
 | `COVERS` | `small` | Pochette en miniature (`off` pour désactiver) |
 | `NOVELTY` | `1` | Analyse de nouveauté (1 appel iTunes par album) |
@@ -124,15 +128,15 @@ pytest
 ruff check .
 ```
 
-94 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
+105 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues
 
 - L'API iTunes peut afficher une sortie avec plusieurs jours de retard sur
   l'appli Music : elle arrive alors dans le récap qui suit son apparition.
-- Un featuring sur l'album d'un autre artiste n'est pas listé par Apple dans
-  les sorties de l'artiste invité : seuls les singles en featuring le sont.
+- Les featurings sont repérés par les crédits du titre (« feat. X ») : un
+  invité non crédité dans le titre ni dans l'interprète n'est pas trouvé.
 - Le bot ne connaît pas l'historique d'écoute : « déjà sorti » veut dire « déjà
   publié par l'artiste », pas « déjà écouté ».
 - Ajouter automatiquement à une playlist Apple Music demanderait l'API Apple
