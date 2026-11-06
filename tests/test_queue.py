@@ -95,3 +95,24 @@ def test_migrate_restores_variants_only_once():
     storage.set_state([90], models.STATE_IGNORED)
     assert storage.migrate() == 0
     assert storage.get_release(90).state == models.STATE_IGNORED
+
+
+def test_old_database_gets_the_detail_column_and_albums_are_reanalyzed():
+    conn = storage.connect()
+    conn.execute("DROP TABLE releases")
+    conn.execute(
+        "CREATE TABLE releases (album_id INTEGER PRIMARY KEY, artist TEXT, artist_id INTEGER,"
+        " title TEXT, kind TEXT, release_date TEXT, url TEXT, cover TEXT, track_count INTEGER,"
+        " total_tracks INTEGER, new_tracks INTEGER, note TEXT, state TEXT NOT NULL DEFAULT 'new',"
+        " analyzed INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "INSERT INTO releases VALUES (95, 'Q', 1, 'Big', 'Album', ?, 'u', '', 14, 14, 8,"
+        " '🆕 8 inédits sur 14 · 6 déjà sortis', 'new', 1)",
+        (clock.today().isoformat(),),
+    )
+    conn.commit()
+    conn.close()
+    storage.migrate()
+    r = storage.get_release(95)
+    assert r.detail == "" and r.analyzed is False and r.note.startswith("🆕 8 inédits")

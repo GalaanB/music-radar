@@ -34,3 +34,10 @@ def test_upcoming_is_capped():
     up = [release(900 + i, f"Soon {i}", days_ago=-3) for i in range(12)]
     text = formatting.upcoming(up)[0]
     assert text.count("•") == config.UPCOMING_MAX_LINES and "4 autre" in text
+
+
+def test_card_shows_the_tracks_already_out_on_a_third_line():
+    r = release(1, "Album", total_tracks=5, new_tracks=3, note="🆕 3 inédits sur 5 · 2 déjà sortis en single",
+                detail="Déjà sortis : Hit One · Hit <Two>")
+    lines = formatting.card_text(r).split("\n")
+    assert len(lines) == 3 and lines[2] == "↳ Déjà sortis : Hit One · Hit &lt;Two&gt;"

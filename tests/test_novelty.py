@@ -163,3 +163,30 @@ def test_network_failure_leaves_release_to_be_analyzed_later(monkeypatch):
     album = release(100, "Album")
     analysis.analyze(album, {1: [album]})
     assert album.analyzed is False and album.note == ""
+
+
+def test_album_lists_the_tracks_already_out(itunes):
+    itunes.tracks = {100: ["Intro", "Hit One (feat. Guest)", "Hit Two", "Deep Cut", "Outro"]}
+    album = release(100, "Great Album", days_ago=3)
+    catalog = {1: [release(10, "Hit One", "Single", 30), release(11, "Hit Two", "Single", 20), album]}
+    analysis.analyze(album, catalog)
+    assert album.detail == "Déjà sortis : Hit One · Hit Two"
+    storage.save_releases([album])
+    assert storage.get_release(100).detail == album.detail
+
+
+def test_reissue_lists_its_new_tracks(itunes):
+    itunes.tracks = {
+        200: ["A", "B", "C"],
+        201: ["A", "B", "C", "Bonus (feat. X)"],
+    }
+    base = release(200, "Album", days_ago=60)
+    deluxe = release(201, "Album (Deluxe)", days_ago=1)
+    analysis.analyze(deluxe, {1: [base, deluxe]})
+    assert deluxe.note == "♻️ réédition · 1 inédit sur 4"
+    assert deluxe.detail == "Inédit : Bonus"
+
+
+def test_track_list_is_capped():
+    titles = [f"T{i}" for i in range(11)]
+    assert text.track_list("Déjà sortis", titles) == "Déjà sortis : T0 · T1 · T2 · T3 · T4 · T5 · T6 · T7 … +3"

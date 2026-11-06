@@ -23,7 +23,9 @@ remplace la veille manuelle par un message quotidien trié.
 - **Analyse de nouveauté** : pour chaque album ou EP, la liste des titres est
   comparée aux singles déjà sortis et, pour une réédition, à l'album d'origine
   (« 🆕 8 inédits sur 14 · 6 déjà sortis en single », « ♻️ réédition · aucun
-  inédit »). Les rééditions sans aucun titre nouveau sont mises de côté.
+  inédit »), avec la liste des titres concernés (« ↳ Déjà sortis : A · B »)
+  pour ne pas ajouter deux fois le même son à la playlist. Les rééditions sans
+  aucun titre nouveau sont mises de côté.
 - **Featurings sur le projet d'un autre artiste** : Apple ne les range pas dans
   les sorties de l'artiste invité. Le bot les trouve via
   [MusicBrainz](https://musicbrainz.org), qui relie les invités par identifiant
@@ -166,7 +168,7 @@ pytest
 ruff check .
 ```
 
-147 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
+152 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues

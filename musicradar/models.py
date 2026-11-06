@@ -32,6 +32,7 @@ class Release:
     total_tracks: int | None = None
     new_tracks: int | None = None
     note: str = ""
+    detail: str = ""   # titres concernés par la note (« Déjà sortis : A · B »)
     state: str = STATE_NEW
     analyzed: bool = False
     explicit: bool = False  # version explicite (préférée à la version "clean")

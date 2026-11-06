@@ -14,7 +14,7 @@ def _link(r: Release) -> str:
 
 
 def card_text(r: Release) -> str:
-    """Carte d'une sortie : 2 lignes."""
+    """Carte d'une sortie : 2 lignes, plus la liste des titres déjà sortis s'il y en a."""
     kind = r.kind
     if r.kind != "Single" and r.total_tracks:
         kind += f" · {r.total_tracks} titres"
@@ -23,7 +23,10 @@ def card_text(r: Release) -> str:
         meta = f"{r.release_date:%d/%m/%Y}"  # la note dit déjà « 🎤 X en featuring »
     if r.note:
         meta += f" · {html.escape(r.note)}"
-    return f"<b>{html.escape(r.artist)}</b> — {_link(r)}\n<i>{meta}</i>"
+    card = f"<b>{html.escape(r.artist)}</b> — {_link(r)}\n<i>{meta}</i>"
+    if r.detail:
+        card += f"\n↳ {html.escape(r.detail)}"
+    return card
 
 
 def _short_tag(r: Release) -> str:

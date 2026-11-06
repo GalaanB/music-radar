@@ -58,6 +58,19 @@ def norm_title(title: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+def short_title(title: str) -> str:
+    """Titre sans les mentions de featuring, pour une liste : 'Song (feat. X)' -> 'Song'."""
+    t = _FEAT_TAIL_RE.sub("", _FEAT_PAREN_RE.sub("", title))
+    return re.sub(r"\s+", " ", t).strip() or title
+
+
+def track_list(label: str, titles: list[str], limit: int = 8) -> str:
+    """« Déjà sortis : A · B · C » (au-delà de `limit` titres : « … +N »)."""
+    shown = " · ".join(short_title(t) for t in titles[:limit])
+    extra = len(titles) - limit
+    return f"{label} : {shown}" + (f" … +{extra}" if extra > 0 else "")
+
+
 _EP_TAIL_RE = re.compile(r"(?:\s|[\(\[])E\.?P\.?[\)\]]?$", re.I)
 
 

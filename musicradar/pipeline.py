@@ -47,7 +47,8 @@ def prepare(batch: Batch) -> Prepared:
         if old:
             r.state = old.state
             if old.analyzed:
-                r.total_tracks, r.new_tracks, r.note, r.analyzed = old.total_tracks, old.new_tracks, old.note, True
+                r.total_tracks, r.new_tracks, r.note, r.detail = old.total_tracks, old.new_tracks, old.note, old.detail
+                r.analyzed = True
         if r.state == STATE_NEW and r.album_id in inherited:
             r.state = inherited[r.album_id]
     for r in rels:

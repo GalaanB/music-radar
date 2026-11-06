@@ -43,6 +43,9 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(config.DATA_DIR / "radar.db")
     for statement in _SCHEMA:
         conn.execute(statement)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(releases)")}
+    if "detail" not in columns:  # base créée avant la liste des titres déjà sortis
+        conn.execute("ALTER TABLE releases ADD COLUMN detail TEXT")
     return conn
 
 
@@ -208,18 +211,19 @@ def tracks_with_album(artist_id: int, excluding: int) -> list[tuple[str, str]]:
 
 _COLS = (
     "album_id, artist, artist_id, title, kind, release_date, url, cover,"
-    " track_count, total_tracks, new_tracks, note, state, analyzed"
+    " track_count, total_tracks, new_tracks, note, state, analyzed, detail"
 )
 
 
 def _row_to_release(row: tuple) -> Release:
     (album_id, artist, artist_id, title, kind, release_date, url, cover,
-     track_count, total_tracks, new_tracks, note, state, analyzed) = row
+     track_count, total_tracks, new_tracks, note, state, analyzed, detail) = row
     return Release(
         album_id=album_id, artist=artist or "?", artist_id=artist_id or 0, title=title or "?",
         kind=kind or "Album", release_date=date.fromisoformat(release_date), url=url or "",
         cover=cover or "", track_count=track_count or 0, total_tracks=total_tracks,
         new_tracks=new_tracks, note=note or "", state=state or STATE_NEW, analyzed=bool(analyzed),
+        detail=detail or "",
     )
 
 
@@ -249,16 +253,16 @@ def all_releases() -> list[Release]:
 def save_releases(releases: list[Release]) -> None:
     """Enregistre/actualise les sorties. L'état de tri existant n'est jamais écrasé."""
     _write_many(
-        "INSERT INTO releases (" + _COLS + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT INTO releases (" + _COLS + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(album_id) DO UPDATE SET"
         " artist=excluded.artist, artist_id=excluded.artist_id, title=excluded.title,"
         " kind=excluded.kind, release_date=excluded.release_date, url=excluded.url,"
         " cover=excluded.cover, track_count=excluded.track_count,"
         " total_tracks=excluded.total_tracks, new_tracks=excluded.new_tracks,"
-        " note=excluded.note, analyzed=excluded.analyzed",
+        " note=excluded.note, analyzed=excluded.analyzed, detail=excluded.detail",
         [
             (r.album_id, r.artist, r.artist_id, r.title, r.kind, r.release_date.isoformat(), r.url,
-             r.cover, r.track_count, r.total_tracks, r.new_tracks, r.note, r.state, int(r.analyzed))
+             r.cover, r.track_count, r.total_tracks, r.new_tracks, r.note, r.state, int(r.analyzed), r.detail)
             for r in releases
         ],
     )
@@ -385,6 +389,15 @@ def migrate() -> int:
         )
         restored = cur.rowcount
         conn.execute("INSERT INTO meta VALUES ('variants_restored', '1')")
+    if not conn.execute("SELECT 1 FROM meta WHERE key = 'details_backfill'").fetchone():
+        # Albums non triés analysés avant la liste des titres déjà sortis : à
+        # réanalyser (la liste des titres est en cache, sans appel réseau).
+        conn.execute(
+            "UPDATE releases SET analyzed = 0 WHERE state = ? AND new_tracks IS NOT NULL"
+            " AND (detail IS NULL OR detail = '')",
+            (STATE_NEW,),
+        )
+        conn.execute("INSERT INTO meta VALUES ('details_backfill', '1')")
     conn.execute("UPDATE releases SET state = ? WHERE state = ?", (STATE_ADDED, STATE_TO_LISTEN))
     for album_id, note in conn.execute("SELECT album_id, note FROM releases WHERE state = ?", (STATE_NEW,)).fetchall():
         new_note = _OLD_NOTE_RE.sub(

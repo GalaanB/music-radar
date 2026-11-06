@@ -4,7 +4,8 @@ Analyse de nouveauté : qu'est-ce que cette sortie t'apporte vraiment ?
 - Featuring : rien à analyser (sa note est posée au scan).
 - Version alternative (slowed, remix…) : de quel son elle est la version.
 - Album / EP : combien de titres sont inédits, en comparant avec les singles
-  déjà sortis, l'album d'origine d'une réédition et les albums déjà analysés.
+  déjà sortis, l'album d'origine d'une réédition et les albums déjà analysés,
+  et lesquels (pour ne pas ajouter deux fois le même son à ta playlist).
   Sans référence, aucune affirmation n'est faite.
 """
 
@@ -46,8 +47,9 @@ def find_original(r: Release, catalog: dict[int, list[Release]]) -> str:
 
 
 def analyze(r: Release, catalog: dict[int, list[Release]]) -> None:
-    """Remplit r.note / r.new_tracks / r.total_tracks (voir le docstring du module)."""
+    """Remplit r.note / r.detail / r.new_tracks / r.total_tracks (voir le docstring du module)."""
     r.analyzed = True
+    r.detail = ""
     if r.kind == KIND_FEATURING:
         return
     base_title, is_edition = text.split_edition(r.title)
@@ -116,8 +118,13 @@ def analyze(r: Release, catalog: dict[int, list[Release]]) -> None:
     only_singles = all(t in from_singles for t in norms if t in known)
     already = f"{known_count} déjà sorti{'s' if known_count > 1 else ''}" + (" en single" if only_singles else "")
 
+    known_titles = [t for t, n in zip(tracks, norms, strict=True) if n in known]
+    new_titles = [t for t, n in zip(tracks, norms, strict=True) if n not in known]
+
     if is_edition and base_found:
         r.new_tracks = new_count
+        if new_count:
+            r.detail = text.track_list("Inédit" + ("s" if new_count > 1 else ""), new_titles)
         r.note = (
             "♻️ réédition · aucun inédit"
             if new_count == 0
@@ -125,6 +132,7 @@ def analyze(r: Release, catalog: dict[int, list[Release]]) -> None:
         )
     elif known_count:
         r.new_tracks = new_count
+        r.detail = text.track_list("Déjà sorti" + ("s" if known_count > 1 else ""), known_titles)
         if new_count == 0:
             r.note = f"🔁 aucun inédit · {already}"
         else:
