@@ -1,14 +1,16 @@
 """Featurings sur le projet d'un autre artiste (absents des sorties de l'invité)."""
 
 import pytest
+import requests
 
-import radar
 from conftest import collection, song
+from musicradar import config, formatting, models, pipeline, scan, storage, text
+from musicradar.sources import itunes as itunes_api
 
 
 @pytest.fixture
 def josman(itunes):
-    conn = radar._db()
+    conn = storage.connect()
     conn.execute("INSERT INTO artists VALUES ('Josman', 1, 'Josman')")
     conn.commit()
     conn.close()
@@ -17,14 +19,14 @@ def josman(itunes):
 
 
 def scanned(days=14):
-    return {r.album_id: r for r in radar.catchup_batch(days).releases}
+    return {r.album_id: r for r in scan.catchup_batch(days).releases}
 
 
 def test_feature_on_another_artists_album_is_found(josman):
     josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
     rels = scanned()
     feat = rels[500]
-    assert feat.kind == radar.KIND_FEATURING and feat.artist == "Ronisia"
+    assert feat.kind == models.KIND_FEATURING and feat.artist == "Ronisia"
     assert feat.note == "🎤 Josman en featuring · album « Sensation »"
     assert feat.url.endswith("?i=500")
     assert 10 in rels  # les sorties habituelles restent là
@@ -42,25 +44,25 @@ def test_irrelevant_tracks_are_skipped(josman, track):
 
 
 def test_credits_with_several_artists_and_commas():
-    assert radar._cmp_key("Josman") in radar._credited("Song (feat. Youssoupha, Josman & Kalash)", "X")
-    assert radar._cmp_key("Josman") in radar._credited("Song", "Ronisia & Josman")
-    assert radar._cmp_key("Tyler, The Creator") in radar._credited("Song (feat. Tyler, The Creator)", "X")
-    assert radar._cmp_key("Josman") in radar._credited("Song feat. Josman", "X")
-    assert radar._cmp_key("Josman") not in radar._credited("Josman Freestyle", "X")
+    assert text.cmp_key("Josman") in text.credited("Song (feat. Youssoupha, Josman & Kalash)", "X")
+    assert text.cmp_key("Josman") in text.credited("Song", "Ronisia & Josman")
+    assert text.cmp_key("Tyler, The Creator") in text.credited("Song (feat. Tyler, The Creator)", "X")
+    assert text.cmp_key("Josman") in text.credited("Song feat. Josman", "X")
+    assert text.cmp_key("Josman") not in text.credited("Josman Freestyle", "X")
 
 
 def test_same_feature_found_through_two_followed_artists_is_kept_once(josman):
-    conn = radar._db()
+    conn = storage.connect()
     conn.execute("INSERT INTO artists VALUES ('Kalash', 2, 'Kalash')")
     conn.commit()
     conn.close()
     track = song(600, "Titre (feat. Josman & Kalash)", "Autre", "Album", 60, days_ago=2)
     josman.songs = {"Josman": [track], "Kalash": [dict(track)]}
-    assert [r.album_id for r in radar.catchup_batch(14).releases].count(600) == 1
+    assert [r.album_id for r in scan.catchup_batch(14).releases].count(600) == 1
 
 
 def test_feature_on_a_followed_artists_album_is_not_duplicated(josman):
-    conn = radar._db()
+    conn = storage.connect()
     conn.execute("INSERT INTO artists VALUES ('Ronisia', 3, 'Ronisia')")
     conn.commit()
     conn.close()
@@ -71,19 +73,19 @@ def test_feature_on_a_followed_artists_album_is_not_duplicated(josman):
 
 
 def test_failed_search_does_not_break_the_scan(josman, monkeypatch):
-    real = radar._get_json
+    real = itunes_api.get_json
 
     def flaky(url, params):
         if params.get("entity") == "song":
-            raise radar.requests.ConnectionError("rate limit")
+            raise requests.ConnectionError("rate limit")
         return real(url, params)
 
-    monkeypatch.setattr(radar, "_get_json", flaky)
+    monkeypatch.setattr(itunes_api, "get_json", flaky)
     assert 10 in scanned()
 
 
 def test_features_can_be_disabled(josman, monkeypatch):
-    monkeypatch.setattr(radar, "FEATURES_ENABLED", False)
+    monkeypatch.setattr(config, "FEATURES_ENABLED", False)
     josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
     assert 500 not in scanned()
     assert not any(p.get("entity") == "song" for _, p in josman.calls)
@@ -91,18 +93,20 @@ def test_features_can_be_disabled(josman, monkeypatch):
 
 def test_feature_card_and_analysis(josman):
     josman.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
-    p = radar.prepare(radar.catchup_batch(14))
+    p = pipeline.prepare(scan.catchup_batch(14))
     feat = next(r for r in p.to_show if r.album_id == 500)
     assert feat.note.startswith("🎤")  # l'analyse ne l'écrase pas
-    assert "Featuring" in radar.card_text(feat) and "Sensation" in radar.card_text(feat)
-    radar.finalize(p)
-    assert radar.daily_batch().releases == []  # notifié une seule fois
+    card = formatting.card_text(feat)
+    assert "Josman en featuring" in card and "Sensation" in card
+    assert card.count("eaturing") == 1  # pas de « Featuring » en double
+    pipeline.finalize(p)
+    assert scan.daily_batch().releases == []  # notifié une seule fois
 
 
 # --- homonymes et doublons -----------------------------------------------------
 
 def follow(name, artist_id):
-    conn = radar._db()
+    conn = storage.connect()
     conn.execute("INSERT INTO artists VALUES (?, ?, ?)", (name, artist_id, name))
     conn.commit()
     conn.close()
@@ -125,19 +129,19 @@ def test_wrong_features_already_waiting_are_removed_but_your_choices_kept(itunes
     itunes.albums = {7: []}
     itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}, {"artistId": 8, "artistName": "Sam"}]}
     from conftest import release
-    radar.save_releases([
-        release(701, "Faux (feat. Sam)", radar.KIND_FEATURING, artist_id=7),
-        release(702, "Gardé (feat. Sam)", radar.KIND_FEATURING, artist_id=7, state=radar.STATE_ADDED),
+    storage.save_releases([
+        release(701, "Faux (feat. Sam)", models.KIND_FEATURING, artist_id=7),
+        release(702, "Gardé (feat. Sam)", models.KIND_FEATURING, artist_id=7, state=models.STATE_ADDED),
     ])
-    radar.catchup_batch(14)
-    assert radar.get_release(701) is None
-    assert radar.get_release(702).state == radar.STATE_ADDED
+    scan.catchup_batch(14)
+    assert storage.get_release(701) is None
+    assert storage.get_release(702).state == models.STATE_ADDED
 
 
 def test_name_check_is_cached(josman):
     josman.search = {"Josman": [{"artistId": 1, "artistName": "Josman"}]}
-    radar.catchup_batch(14)
-    radar.catchup_batch(14)
+    scan.catchup_batch(14)
+    scan.catchup_batch(14)
     checks = [p for _, p in josman.calls if p.get("entity") == "musicArtist"]
     assert len(checks) == 1
 
@@ -145,6 +149,6 @@ def test_name_check_is_cached(josman):
 def test_feature_already_released_as_single_is_not_repeated(josman):
     # « Boussole » est d'abord sorti en single (notifié), puis sur l'album de l'artiste invitant.
     from conftest import release
-    radar.save_releases([release(80, "Boussole (feat. Josman)", "Single", days_ago=20, artist="Autre", artist_id=1)])
+    storage.save_releases([release(80, "Boussole (feat. Josman)", "Single", days_ago=20, artist="Autre", artist_id=1)])
     josman.songs = {"Josman": [song(800, "Boussole (feat. Josman)", "Autre", "Grand Album", 81, days_ago=2)]}
     assert 800 not in scanned()

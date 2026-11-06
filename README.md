@@ -13,8 +13,10 @@ remplace la veille manuelle par un message quotidien trié.
 ## Fonctionnalités
 
 - **Récap quotidien** (sauf vendredi) avec les sorties des 14 derniers jours
-  pas encore notifiées : une sortie qu'Apple affiche en retard arrive quand même, et **récap hebdo le vendredi** avec les sorties de la semaine et
-  celles annoncées pour les 7 jours suivants.
+  pas encore notifiées : une sortie qu'Apple affiche en retard arrive quand même.
+- **Récap du vendredi** : les sorties pas encore notifiées (le gros des sorties
+  tombe le vendredi), un rappel du nombre de sorties qui attendent encore dans
+  `/trier`, et celles annoncées pour les 7 jours suivants.
 - **Tri en un appui** : chaque sortie arrive avec les boutons « ➕ Ajoutée »
   (rangée dans ma playlist) et « 🙈 Ignorer ». Au-delà de 12 sorties d'un coup,
   le récap passe en liste compacte et `/trier` les présente une par une.
@@ -23,8 +25,12 @@ remplace la veille manuelle par un message quotidien trié.
   (« 🆕 8 inédits sur 14 · 6 déjà sortis en single », « ♻️ réédition · aucun
   inédit »). Les rééditions sans aucun titre nouveau sont mises de côté.
 - **Featurings sur le projet d'un autre artiste** : Apple ne les range pas dans
-  les sorties de l'artiste invité. Le bot les cherche en plus et les signale
-  (« 🎤 Josman en featuring · album « Sensation » »).
+  les sorties de l'artiste invité. Le bot les trouve via
+  [MusicBrainz](https://musicbrainz.org), qui relie les invités par identifiant
+  (chaque artiste est associé à sa fiche MusicBrainz par son lien Apple Music,
+  donc sans confusion entre homonymes), puis retrouve le titre chez Apple :
+  « 🎤 Quavo en featuring · album « … » ». Pour un artiste absent de
+  MusicBrainz, une recherche par nom chez Apple prend le relais.
 - **Versions alternatives** (slowed, sped up, instru, remix…) repérées et
   rattachées à leur original : « 🔁 version slowed de « Album » ».
 - **Dédoublonnage** : Apple publie souvent plusieurs fiches pour une même sortie
@@ -52,20 +58,42 @@ remplace la veille manuelle par un message quotidien trié.
 
 ```mermaid
 flowchart LR
-    T[Telegram] <-->|polling| B[bot.py<br/>commandes, boutons, planning]
-    B --> R[radar.py<br/>scan, analyse, tri]
-    R -->|lookup / search| I[(API iTunes)]
-    R --> D[(SQLite<br/>data/radar.db)]
-    R --> A[artists.txt]
+    T[Telegram] <-->|polling| B[musicradar.bot<br/>commandes, boutons, planning]
+    B --> S[scan / features<br/>sorties et featurings]
+    B --> P[pipeline / analysis<br/>dédoublonnage, nouveauté]
+    S -->|lookup / search| I[(API iTunes)]
+    S -->|featurings| M[(MusicBrainz)]
+    S & P --> D[(SQLite<br/>data/radar.db)]
+    B --> A[artists.txt]
 ```
 
-- `radar.py` : toute la logique, sans dépendance Telegram, donc testable seule.
-  Scan des artistes, analyse de nouveauté, dédoublonnage, états de tri, mise en
-  forme HTML des messages.
-- `bot.py` : interface Telegram ([python-telegram-bot](https://python-telegram-bot.org/)),
-  planification (JobQueue), boutons inline, gestion des erreurs.
-- **SQLite** : ID des artistes, sorties notifiées, état de tri, titres des
-  albums analysés (servent de cache et de base de comparaison).
+Le cœur (`musicradar/`) ne dépend pas de Telegram : il se teste et se lance
+seul. L'interface Telegram (`musicradar/bot/`) ne fait qu'appeler ce cœur.
+
+| Module | Rôle |
+|---|---|
+| `config.py`, `clock.py` | Réglages (`.env`) et date du jour |
+| `models.py` | `Release`, `Batch`, `Prepared` et états de tri |
+| `text.py` | Normalisation des noms et titres, éditions, versions alternatives |
+| `storage.py` | Base SQLite : schéma, migrations, file de tri, sauvegardes |
+| `sources/itunes.py` | API iTunes : débit limité, catalogue, recherche, titres |
+| `sources/musicbrainz.py` | API MusicBrainz : fiche de l'artiste, enregistrements crédités |
+| `artists.py` | `artists.txt`, résolution des ID, `/ajouter`, homonymes |
+| `scan.py` | Scan des artistes suivis, coupe-circuit en cas de panne d'Apple |
+| `features.py` | Featurings sur les projets d'autres artistes |
+| `analysis.py` | Nouveauté : inédits, singles déjà sortis, rééditions |
+| `pipeline.py` | Préparation d'un récap, puis marquage « notifié » après l'envoi |
+| `formatting.py` | Mise en forme HTML des messages Telegram |
+| `bot/recaps.py` | Récaps planifiés et à la demande, nouvel essai en cas d'échec |
+| `bot/sorting.py` | Boutons des cartes et file `/trier` |
+| `bot/artists.py` | `/ajouter`, `/retirer`, `/artistes`, `/verifier` |
+| `bot/ui.py`, `bot/app.py` | Envoi des messages, claviers, erreurs, démarrage |
+
+Pour diagnostiquer sans rien envoyer sur Telegram :
+
+```bash
+docker compose exec music-radar python -m musicradar daily     # ou weekly, resolve, catchup 30
+```
 
 ### Choix techniques
 
@@ -73,7 +101,16 @@ flowchart LR
   3,2 s entre deux appels, un seul scan à la fois (`asyncio.Lock`), appels
   bloquants dans `asyncio.to_thread` pour ne jamais figer le bot.
 - **Pas de doublon de notification** : une sortie n'est marquée « notifiée »
-  qu'après l'envoi réussi sur Telegram ; en cas d'échec, elle repart le lendemain.
+  qu'après l'envoi réussi sur Telegram ; en cas d'échec, elle repart au récap
+  suivant.
+- **Résistance aux pannes** : si Apple échoue 5 fois d'affilée, le scan
+  s'arrête au lieu de traîner des heures, et le récap est retenté une fois
+  1 h plus tard (le récap sur 14 jours rattrape le reste). Si MusicBrainz
+  tombe, la recherche Apple prend le relais pour la suite du scan.
+- **Une seule notification par récap** : l'en-tête sonne, les cartes arrivent
+  en silence.
+- **Sauvegarde quotidienne** de la base dans `data/backups/` (7 jours gardés),
+  via l'API de sauvegarde SQLite, cohérente même pendant une écriture.
 - **`artists.txt` monté en fichier unique** dans le conteneur : il est réécrit
   sur place (jamais remplacé), sinon le montage Docker casserait.
 - **Migrations de base** au démarrage, sans appel réseau, pour faire évoluer
@@ -84,7 +121,7 @@ flowchart LR
 Prérequis : Docker et Docker Compose, un bot Telegram créé avec @BotFather.
 
 ```bash
-git clone https://github.com/<toi>/music-radar.git
+git clone https://github.com/GalaanB/music-radar.git
 cd music-radar
 cp .env.example .env                  # puis renseigner le token et le chat ID
 cp artists.example.txt artists.txt    # à créer AVANT le premier lancement
@@ -96,9 +133,7 @@ docker compose up -d --build
 
 ### Mettre à jour
 
-Sur le PC, `publier.cmd` (double-clic) envoie les modifications sur GitHub,
-avec un garde-fou qui refuse de publier `.env` ou `artists.txt`.
-Sur le serveur :
+Pousser les modifications sur GitHub (VS Code ou `git push`), puis sur le serveur :
 
 ```bash
 bash deploy.sh    # git pull + reconstruction du conteneur
@@ -112,10 +147,11 @@ ne touche jamais au token, à la liste d'artistes ni à la base.
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | — | Bot et seul chat autorisé |
-| `DAILY_TIME`, `WEEKLY_TIME` | `09:00` | Heures d'envoi (Europe/Paris) |
+| `DAILY_TIME`, `WEEKLY_TIME` | `09:00` | Heure de lancement du scan (Europe/Paris), ~20 min avant le message |
 | `SEND_EMPTY_DAILY` | `0` | `1` = message « Rien de nouveau » les jours vides |
 | `DAILY_LOOKBACK_DAYS` | `14` | Jours couverts par le récap quotidien |
-| `FEATURES` | `1` | Recherche des featurings (double la durée du scan, ~20 min) |
+| `FEATURES` | `1` | Recherche des featurings (scan ~15-20 min au lieu de ~10) |
+| `MUSICBRAINZ` | `1` | Featurings via MusicBrainz (`0` : recherche par nom chez Apple seulement) |
 | `CARDS_MAX` | `12` | Au-delà : liste compacte + `/trier` |
 | `COVERS` | `small` | Pochette en miniature (`off` pour désactiver) |
 | `NOVELTY` | `1` | Analyse de nouveauté (1 appel iTunes par album) |
@@ -130,17 +166,18 @@ pytest
 ruff check .
 ```
 
-115 tests, sans aucun accès réseau : l'API iTunes et Telegram sont simulés.
+145 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues
 
 - L'API iTunes peut afficher une sortie avec plusieurs jours de retard sur
   l'appli Music : elle arrive alors dans le récap qui suit son apparition.
-- Les featurings sont repérés par les crédits du titre (« feat. X ») : un
-  invité non crédité dans le titre ni dans l'interprète n'est pas trouvé, et
-  ceux des artistes dont le nom est porté par plusieurs artistes chez Apple
-  (SAM, Luv…) ne sont pas cherchés, pour éviter les confusions.
+- Les featurings dépendent de MusicBrainz, une base communautaire : un titre
+  très récent peut y apparaître avec quelques jours de retard (le récap sur
+  14 jours le rattrape). Pour les artistes absents de MusicBrainz, la recherche
+  par nom chez Apple manque des featurings d'artistes très prolifiques, et
+  n'est pas faite pour les noms portés par plusieurs artistes (SAM, Luv…).
 - Le bot ne connaît pas l'historique d'écoute : « déjà sorti » veut dire « déjà
   publié par l'artiste », pas « déjà écouté ».
 - Ajouter automatiquement à une playlist Apple Music demanderait l'API Apple

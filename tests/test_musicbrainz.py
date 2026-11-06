@@ -1,0 +1,120 @@
+"""Featurings trouvés via MusicBrainz (invités reliés par identifiant)."""
+
+from datetime import timedelta
+
+import pytest
+
+from conftest import collection, recording, song
+from musicradar import clock, config, models, scan, storage
+from musicradar.sources import musicbrainz
+
+
+def ago(days):
+    return (clock.today() - timedelta(days=days)).isoformat()
+
+
+QUAVO, QUAVO_MC, YUNG_MIAMI, GAME = "mb-quavo", "mb-quavo-mc", "mb-yung-miami", "mb-the-game"
+
+
+@pytest.fixture
+def quavo(itunes, mb):
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('Quavo', 10, 'Quavo')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {10: [collection(100, "Own Album", days_ago=30, artist="Quavo")]}
+    # Deux « Quavo » chez MusicBrainz : seul le bon renvoie vers l'ID Apple 10.
+    mb.artists = {"Quavo": [{"id": QUAVO_MC, "name": "Quavo"}, {"id": QUAVO, "name": "Quavo"}]}
+    mb.apple_links = {QUAVO: [10], QUAVO_MC: [555]}
+    mb.recordings = {QUAVO: [
+        recording("TMTC", [("Yung Miami", YUNG_MIAMI), ("Quavo", QUAVO), ("G Herbo", "mb-g")], ago(5)),
+        recording("HAAVIN", [("Quavo", QUAVO)], ago(3)),                          # son propre titre
+        recording("Bando", [("Angélique Kidjo", "mb-ak"), ("Quavo", QUAVO)], ago(190)),  # vieux, sur une compil
+    ]}
+    itunes.songs = {
+        "Yung Miami TMTC": [song(9001, "TMTC (feat. Quavo & G Herbo)", "Yung Miami", "Album de Yung Miami", 900, days_ago=5)],
+    }
+    return itunes, mb
+
+
+def test_mbid_is_chosen_by_apple_link_not_by_name(quavo):
+    assert musicbrainz.mbid_for(10, "Quavo") == QUAVO
+
+
+def test_feature_credited_only_in_title_is_found(quavo):
+    rels = {r.album_id: r for r in scan.catchup_batch(14).releases}
+    tmtc = rels[9001]
+    assert tmtc.kind == models.KIND_FEATURING and tmtc.artist == "Yung Miami"
+    assert tmtc.note == "🎤 Quavo en featuring · album « Album de Yung Miami »"
+    assert not any("Bando" in r.title or "HAAVIN" in r.title for r in rels.values())
+
+
+def test_feature_not_on_apple_is_skipped(quavo):
+    itunes, _ = quavo
+    itunes.songs = {}
+    assert not any(r.kind == models.KIND_FEATURING for r in scan.catchup_batch(14).releases)
+
+
+def test_ambiguous_name_works_through_musicbrainz(itunes, mb):
+    # « SAM » est ambigu chez Apple, mais MusicBrainz le relie par l'ID Apple.
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('SAM', 7, 'SAM')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {7: []}
+    itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}, {"artistId": 8, "artistName": "Sam"}]}
+    mb.artists = {"SAM": [{"id": "mb-sam", "name": "SAM"}]}
+    mb.apple_links = {"mb-sam": [7]}
+    mb.recordings = {"mb-sam": [recording("Feu", [("Autre", "mb-x"), ("SAM", "mb-sam")], ago(3))]}
+    itunes.songs = {"Autre Feu": [song(7001, "Feu (feat. SAM)", "Autre", "Projet", 70, days_ago=3)]}
+    assert 7001 in {r.album_id for r in scan.catchup_batch(14).releases}
+
+
+def test_unknown_artist_falls_back_to_apple_search(itunes, mb):
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('Josman', 1, 'Josman')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {1: []}
+    itunes.songs = {"Josman": [song(500, "Sensible (feat. Josman)", "Ronisia", "Sensation", 50, days_ago=6)]}
+    assert 500 in {r.album_id for r in scan.catchup_batch(14).releases}
+
+
+def test_same_name_without_apple_link_is_not_guessed(itunes, mb):
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('Luv', 33, 'Luv')")
+    conn.commit()
+    conn.close()
+    itunes.search = {"Luv": [{"artistId": 33, "artistName": "Luv"}, {"artistId": 34, "artistName": "Luv"}]}
+    mb.artists = {"Luv": [{"id": "mb-luv", "name": "Luv"}]}
+    assert musicbrainz.mbid_for(33, "Luv") is None
+
+
+def test_mbid_lookup_is_cached(quavo):
+    _, mb = quavo
+    musicbrainz.mbid_for(10, "Quavo")
+    n = len(mb.calls)
+    musicbrainz.mbid_for(10, "Quavo")
+    assert len(mb.calls) == n
+
+
+def test_musicbrainz_can_be_disabled(quavo, monkeypatch):
+    _, mb = quavo
+    monkeypatch.setattr(config, "MUSICBRAINZ_ENABLED", False)
+    scan.catchup_batch(14)
+    assert mb.calls == []
+
+
+def test_old_name_based_features_of_an_ambiguous_artist_are_replaced(itunes, mb):
+    from conftest import release
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('SAM', 7, 'SAM')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {7: []}
+    itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}, {"artistId": 8, "artistName": "Sam"}]}
+    mb.artists = {"SAM": [{"id": "mb-sam", "name": "SAM"}]}
+    mb.apple_links = {"mb-sam": [7]}
+    storage.save_releases([release(6001, "Faux (feat. Sam)", models.KIND_FEATURING, artist_id=7)])
+    scan.catchup_batch(14)
+    assert storage.get_release(6001) is None
