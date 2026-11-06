@@ -19,7 +19,7 @@ import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import clock, config
+from . import clock, config, text
 from .models import KIND_FEATURING, STATE_ADDED, STATE_IGNORED, STATE_NEW, STATE_TO_LISTEN, Release
 
 _SCHEMA = (
@@ -285,6 +285,22 @@ def drop_pending_features(artist_ids: list[int]) -> None:
     )
 
 
+def drop_feature_twins() -> int:
+    """
+    Retire de la file les featurings non triés qui doublonnent un titre déjà
+    connu en single ou sur un projet crédité au même artiste. Retourne leur nombre.
+    """
+    releases = all_releases()
+    known = text.title_index((r.title, r.artist) for r in releases if r.kind != KIND_FEATURING)
+    twins = [
+        r.album_id
+        for r in releases
+        if r.kind == KIND_FEATURING and r.state == STATE_NEW and text.already_out(known, r.artist, r.title)
+    ]
+    delete_releases(twins)
+    return len(twins)
+
+
 def seen_ids() -> set[int]:
     conn = connect()
     ids = {r[0] for r in conn.execute("SELECT album_id FROM seen")}
@@ -389,6 +405,7 @@ def migrate() -> int:
     )
     conn.commit()
     conn.close()
+    drop_feature_twins()
     return restored
 
 

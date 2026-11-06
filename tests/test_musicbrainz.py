@@ -118,3 +118,34 @@ def test_old_name_based_features_of_an_ambiguous_artist_are_replaced(itunes, mb)
     storage.save_releases([release(6001, "Faux (feat. Sam)", models.KIND_FEATURING, artist_id=7)])
     scan.catchup_batch(14)
     assert storage.get_release(6001) is None
+
+
+def test_feature_already_out_as_a_duo_single_is_not_repeated(itunes, mb):
+    # « Run The World » : single de « Loe Shimmy & Brent Faiyaz », que MusicBrainz
+    # range aussi comme featuring de Brent Faiyaz. Une seule carte suffit.
+    conn = storage.connect()
+    conn.executemany("INSERT INTO artists VALUES (?, ?, ?)", [("Loe Shimmy", 20, "Loe Shimmy"), ("Brent Faiyaz", 21, "Brent Faiyaz")])
+    conn.commit()
+    conn.close()
+    duo = "Loe Shimmy & Brent Faiyaz"
+    itunes.albums = {20: [collection(300, "Run The World - Single", days_ago=4, artist=duo)], 21: []}
+    mb.artists = {"Brent Faiyaz": [{"id": "mb-brent", "name": "Brent Faiyaz"}], "Loe Shimmy": []}
+    mb.apple_links = {"mb-brent": [21]}
+    mb.recordings = {"mb-brent": [recording("Run The World", [("Loe Shimmy", "mb-loe"), ("Brent Faiyaz", "mb-brent")], ago(4))]}
+    # Chez Apple, le titre remonte via une autre fiche (version clean).
+    itunes.songs = {"Loe Shimmy Run The World": [song(3001, "Run The World", duo, "Run The World - Single", 301, days_ago=4)]}
+    rels = scan.catchup_batch(14).releases
+    assert [r.kind for r in rels if r.title.startswith("Run The World")] == ["Single"]
+
+
+def test_featuring_twins_already_waiting_are_removed_at_startup():
+    from conftest import release
+    duo = "Loe Shimmy & Brent Faiyaz"
+    storage.save_releases([
+        release(300, "Run The World", "Single", artist=duo, artist_id=20),
+        release(3001, "Run The World", models.KIND_FEATURING, artist=duo, artist_id=21),
+        release(3002, "Autre titre", models.KIND_FEATURING, artist=duo, artist_id=21),
+    ])
+    storage.migrate()
+    assert storage.get_release(300) and storage.get_release(3002)
+    assert storage.get_release(3001) is None

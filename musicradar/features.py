@@ -23,7 +23,6 @@ from .sources import itunes, musicbrainz
 
 logger = logging.getLogger("radar.features")
 
-
 def release_from_track(t: dict, artist_id: int, name: str) -> Release:
     """Sortie « Featuring » à partir d'un titre Apple (résultat de recherche)."""
     released = datetime.fromisoformat(t["releaseDate"].replace("Z", "+00:00")).astimezone(config.TZ).date()
@@ -48,7 +47,7 @@ def from_apple_search(
     name: str,
     since: date,
     known_albums: set[int],
-    known_titles: set[tuple[str, str]],
+    known_titles: text.TitleIndex,
 ) -> list[Release]:
     """
     Titres où l'artiste est crédité (dans le titre ou l'interprète) sur le
@@ -67,7 +66,7 @@ def from_apple_search(
                 continue
             if key not in text.credited(t.get("trackName", ""), t.get("artistName", "")):
                 continue  # le nom apparaît dans le titre sans être un crédit
-            if (text.cmp_key(t.get("artistName", "")), text.norm_title(t.get("trackName", ""))) in known_titles:
+            if text.already_out(known_titles, t.get("artistName", ""), t.get("trackName", "")):
                 continue  # déjà sorti en single (et donc déjà notifié comme tel)
             rel = release_from_track(t, artist_id, name)
             if rel.release_date >= since:
@@ -95,7 +94,7 @@ def from_musicbrainz(
     mbid: str,
     since: date,
     known_albums: set[int],
-    known_titles: set[tuple[str, str]],
+    known_titles: text.TitleIndex,
 ) -> list[Release]:
     """
     Titres récents où l'artiste est crédité sans être l'artiste principal,
@@ -117,7 +116,7 @@ def from_musicbrainz(
             continue
         primary = credits[0].get("name") or credits[0].get("artist", {}).get("name", "")
         ident = (text.cmp_key(primary), text.norm_title(rec.get("title", "")))
-        if ident in seen_titles or ident in known_titles:
+        if ident in seen_titles or text.already_out(known_titles, primary, rec.get("title", "")):
             continue
         seen_titles.add(ident)
         try:
@@ -127,6 +126,8 @@ def from_musicbrainz(
             continue
         if t is None or t.get("collectionId") in known_albums or t.get("artistId") == artist_id:
             continue
+        if text.already_out(known_titles, t.get("artistName", ""), t.get("trackName", "")):
+            continue  # même titre déjà connu sous une autre fiche Apple
         rel = release_from_track(t, artist_id, name)
         if rel.release_date >= since:  # pas une vieille version du titre chez Apple
             out.append(rel)
@@ -145,7 +146,7 @@ def find(
     Retourne (featurings, nombre d'erreurs).
     """
     known_albums = already_found | {rel.album_id for rel in known}
-    known_titles = {(text.cmp_key(rel.artist), text.norm_title(rel.title)) for rel in known if rel.kind != KIND_FEATURING}
+    known_titles = text.title_index((r.title, r.artist) for r in known if r.kind != KIND_FEATURING)
     found: list[Release] = []
     unreliable: list[int] = []
     errors = 0

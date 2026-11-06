@@ -166,7 +166,7 @@ pytest
 ruff check .
 ```
 
-145 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
+147 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues

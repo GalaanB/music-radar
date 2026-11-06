@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 
 # --------------------------------------------------------------------------- #
 # Noms
@@ -178,3 +179,24 @@ def credited(track_name: str, artist_name: str) -> set[str]:
             if name.strip():
                 names.add(cmp_key(name))
     return names
+
+
+TitleIndex = dict[str, list[set[str]]]
+
+
+def title_index(pairs: Iterable[tuple[str, str]]) -> TitleIndex:
+    """Titre normalisé -> artistes crédités, à partir de couples (titre, interprète)."""
+    index: TitleIndex = {}
+    for title, artist in pairs:
+        index.setdefault(norm_title(title), []).append(credited(title, artist))
+    return index
+
+
+def already_out(index: TitleIndex, artist: str, title: str) -> bool:
+    """
+    Le titre est-il déjà dans l'index, crédité à au moins un de ces artistes ?
+    « Run The World » de Loe Shimmy est déjà connu comme single de
+    « Loe Shimmy & Brent Faiyaz » : pas besoin d'une carte « Featuring » en plus.
+    """
+    keys = credited("", artist)
+    return any(keys & creds for creds in index.get(norm_title(title), []))
