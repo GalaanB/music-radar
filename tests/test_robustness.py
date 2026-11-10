@@ -54,7 +54,8 @@ def test_a_few_apple_errors_do_not_stop_the_scan(itunes, monkeypatch):
     real = itunes.__call__
 
     def flaky(url, params):
-        if params.get("entity") == "album" and params["id"] in (1, 2, 3, 4):
+        # Les artistes 1 à 4 échouent, seuls comme dans un paquet.
+        if params.get("entity") == "album" and {1, 2, 3, 4} & {int(i) for i in str(params["id"]).split(",")}:
             raise requests.ConnectionError("rate limit")
         return real(url, params)
 

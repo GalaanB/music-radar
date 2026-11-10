@@ -156,42 +156,74 @@ def name_is_unique(artist_id: int, name: str) -> bool:
 # Sorties et titres
 # --------------------------------------------------------------------------- #
 
-def fetch_artist_releases(itunes_id: int) -> list[Release]:
-    """Toutes les fiches (albums, EP, singles) qu'Apple associe à l'artiste."""
+def _lookup_albums(ids: int | str) -> list[dict]:
     data = get_json(
         config.ITUNES_LOOKUP,
         {
-            "id": itunes_id,
+            "id": ids,
             "entity": "album",
             "sort": "recent",
             "limit": config.ALBUMS_PER_ARTIST,
             "country": config.COUNTRY,
         },
     )
+    return data.get("results", [])
+
+
+def _release_from_collection(item: dict, itunes_id: int) -> Release | None:
+    """Sortie à partir d'une fiche « collection » ; None (et un avertissement) si elle est incomplète."""
+    try:
+        kind, title = text.kind_and_title(item["collectionName"])
+        released = datetime.fromisoformat(item["releaseDate"].replace("Z", "+00:00")).astimezone(config.TZ).date()
+        return Release(
+            album_id=item["collectionId"],
+            artist=item.get("artistName", "?"),
+            title=title,
+            kind=kind,
+            release_date=released,
+            url=item["collectionViewUrl"],
+            artist_id=itunes_id,
+            cover=cover_url(item.get("artworkUrl100", "")),
+            track_count=int(item.get("trackCount") or 0),
+            explicit=item.get("collectionExplicitness") == "explicit",
+        )
+    except (KeyError, ValueError) as exc:
+        logger.warning("Entrée album ignorée (%s) : %s", exc, item.get("collectionName"))
+        return None
+
+
+def fetch_artist_releases(itunes_id: int) -> list[Release]:
+    """Toutes les fiches (albums, EP, singles) qu'Apple associe à l'artiste."""
     releases: list[Release] = []
-    for item in data.get("results", []):
+    for item in _lookup_albums(itunes_id):
         if item.get("wrapperType") != "collection":
             continue  # le 1er résultat est l'artiste lui-même
-        try:
-            kind, title = text.kind_and_title(item["collectionName"])
-            released = datetime.fromisoformat(item["releaseDate"].replace("Z", "+00:00")).astimezone(config.TZ).date()
-            releases.append(
-                Release(
-                    album_id=item["collectionId"],
-                    artist=item.get("artistName", "?"),
-                    title=title,
-                    kind=kind,
-                    release_date=released,
-                    url=item["collectionViewUrl"],
-                    artist_id=itunes_id,
-                    cover=cover_url(item.get("artworkUrl100", "")),
-                    track_count=int(item.get("trackCount") or 0),
-                    explicit=item.get("collectionExplicitness") == "explicit",
-                )
-            )
-        except (KeyError, ValueError) as exc:
-            logger.warning("Entrée album ignorée (%s) : %s", exc, item.get("collectionName"))
+        rel = _release_from_collection(item, itunes_id)
+        if rel:
+            releases.append(rel)
     return releases
+
+
+def fetch_many_artist_releases(itunes_ids: list[int]) -> dict[int, list[Release]]:
+    """
+    Fiches de plusieurs artistes en une seule requête. Apple répond par blocs :
+    la fiche « artist », puis ses albums (200 au plus par artiste, comme en
+    requête simple). Un artiste dont le bloc est absent de la réponse n'est pas
+    dans le résultat : à l'appelant de le redemander seul.
+    """
+    wanted = set(itunes_ids)
+    out: dict[int, list[Release]] = {}
+    current: int | None = None
+    for item in _lookup_albums(",".join(map(str, itunes_ids))):
+        if item.get("wrapperType") == "artist":
+            current = item.get("artistId") if item.get("artistId") in wanted else None
+            if current is not None:
+                out.setdefault(current, [])
+        elif item.get("wrapperType") == "collection" and current is not None:
+            rel = _release_from_collection(item, current)
+            if rel:
+                out[current].append(rel)
+    return out
 
 
 def recent_releases(artist_id: int, n: int = 3) -> list[Release]:

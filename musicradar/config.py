@@ -21,6 +21,10 @@ HTTP_TIMEOUT_S = 20
 # L'API ne trie pas vraiment par date (une sortie de 2023 peut précéder une de
 # 2026) : on lit toutes les fiches renvoyées, c'est la même requête.
 ALBUMS_PER_ARTIST = 200
+# Catalogues lus par paquets : `lookup?id=A,B,C…` renvoie un bloc par artiste
+# (la limite de 200 fiches s'applique à chacun), en une seule requête.
+# ITUNES_BATCH=1 revient à une requête par artiste.
+LOOKUP_BATCH_SIZE = max(1, int(os.getenv("ITUNES_BATCH", "5")))
 
 # --- Récaps ---
 # Le récap quotidien regarde les N derniers jours (hors sorties déjà notifiées) :

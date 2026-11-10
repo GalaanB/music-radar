@@ -56,6 +56,7 @@ class FakeItunes:
         self.search: dict[str, list[dict]] = {}       # terme -> résultats "musicArtist"
         self.songs: dict[str, list[dict]] = {}        # terme -> résultats "song" (featurings)
         self.artists: dict[int, dict] = {}            # artist_id -> fiche "artist"
+        self.no_block: set[int] = set()               # artistes absents d'une réponse groupée
         self.calls: list[tuple[str, dict]] = []
 
     def __call__(self, url: str, params: dict) -> dict:
@@ -64,6 +65,13 @@ class FakeItunes:
             source = self.songs if params.get("entity") == "song" else self.search
             return {"results": source.get(params["term"], [])}
         entity = params.get("entity")
+        if entity == "album" and isinstance(params["id"], str):
+            # Requête groupée « 1,2,3 » : un bloc par artiste (fiche artiste, puis ses albums).
+            results: list[dict] = []
+            for aid in map(int, params["id"].split(",")):
+                if aid not in self.no_block:
+                    results += [{"wrapperType": "artist", "artistId": aid}, *self.albums.get(aid, [])]
+            return {"results": results}
         if entity == "album":
             return {"results": [{"wrapperType": "artist"}, *self.albums.get(params["id"], [])]}
         if entity == "song":

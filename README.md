@@ -101,6 +101,8 @@ docker compose exec music-radar python -m musicradar daily     # ou weekly, reso
 
 ### Choix techniques
 
+- **Catalogues lus par paquets de 5 artistes** (`lookup?id=A,B,C…`) : 37
+  requêtes au lieu de 185. Un paquet en erreur est repris artiste par artiste.
 - **Respect du débit iTunes** (~20 requêtes/min, limite non officielle) :
   3,2 s entre deux appels, garantis par un limiteur commun à tous les threads
   (`ratelimit.py`), un seul scan à la fois (`asyncio.Lock`), appels bloquants
@@ -165,6 +167,7 @@ ne touche jamais au token, à la liste d'artistes ni à la base.
 | `NOVELTY` | `1` | Analyse de nouveauté (1 appel iTunes par album) |
 | `UPCOMING_DAYS`, `UPCOMING_MAX` | `7`, `8` | Sorties à venir du vendredi |
 | `ITUNES_COUNTRY` | `fr` | Catalogue Apple Music |
+| `ITUNES_BATCH` | `5` | Artistes par requête de catalogue (`1` : une requête par artiste) |
 
 ## Tests
 
@@ -174,7 +177,7 @@ pytest
 ruff check .
 ```
 
-246 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
+253 tests, sans aucun accès réseau : l'API iTunes, MusicBrainz et Telegram sont simulés.
 Ils sont lancés par GitHub Actions à chaque push.
 
 ## Limites connues

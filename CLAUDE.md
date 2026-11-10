@@ -64,7 +64,8 @@ Le cœur ne dépend pas de Telegram ; `bot/` ne fait que l'appeler.
 
 `bot/recaps.run_recap` (sous `ui.scan_lock`, un seul scan à la fois) :
 
-1. `scan.daily_batch()` : catalogue de chaque artiste (`itunes.fetch_artist_releases`),
+1. `scan.daily_batch()` : catalogue des artistes par paquets de 5
+   (`itunes.fetch_many_artist_releases`, repli sur `fetch_artist_releases`),
    puis `features.find`, puis `scan.dedupe`, puis filtre des sorties déjà notifiées.
    MusicBrainz est interrogé en parallèle dès le début du scan, dans un seul
    thread (`features.MusicBrainzPrefetch`) ; `features.find` en lit les

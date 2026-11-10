@@ -43,8 +43,8 @@ def dedupe(releases: list[Release]) -> list[Release]:
 
 def scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
     """
-    Parcourt tous les artistes résolus (~3 s par artiste pour respecter la
-    limite d'Apple), puis cherche leurs featurings. Retourne les sorties dont
+    Lit le catalogue de tous les artistes résolus, par paquets (une requête
+    Apple toutes les ~3 s), puis cherche leurs featurings. Retourne les sorties dont
     la date est >= `since` (futures comprises) et le catalogue de chaque
     artiste, réutilisé par l'analyse de nouveauté sans appel de plus.
     """
@@ -69,24 +69,38 @@ def _scan(
     catalog: dict[int, list[Release]] = {}
     errors = 0
     failures_in_a_row = 0
-    for aid in names:
-        try:
-            rels = itunes.fetch_artist_releases(aid)
-        except Exception as exc:
-            errors += 1
-            failures_in_a_row += 1
-            logger.error("Artiste %s : échec de récupération (%s)", aid, exc)
-            if failures_in_a_row >= config.APPLE_MAX_FAILURES:
-                raise RuntimeError(
-                    f"Apple ne répond plus ({failures_in_a_row} échecs d'affilée) : scan interrompu. "
-                    "Il sera refait au prochain récap, rien ne sera perdu."
-                ) from exc
-            continue
-        failures_in_a_row = 0
-        catalog[aid] = rels
-        for rel in rels:
-            if rel.release_date >= since:
-                found[rel.album_id] = rel  # un feat. peut apparaître chez plusieurs artistes
+    ids = list(names)
+    for start in range(0, len(ids), config.LOOKUP_BATCH_SIZE):
+        chunk = ids[start : start + config.LOOKUP_BATCH_SIZE]
+        grouped: dict[int, list[Release]] = {}
+        if len(chunk) > 1:
+            try:
+                grouped = itunes.fetch_many_artist_releases(chunk)
+            except Exception as exc:  # noqa: BLE001
+                # Repli : chaque artiste du paquet est redemandé seul, avec le
+                # décompte d'échecs habituel.
+                logger.warning("Paquet de %d artistes illisible (%s) : reprise un par un", len(chunk), exc)
+        for aid in chunk:
+            if aid in grouped:
+                rels = grouped[aid]
+            else:
+                try:
+                    rels = itunes.fetch_artist_releases(aid)
+                except Exception as exc:
+                    errors += 1
+                    failures_in_a_row += 1
+                    logger.error("Artiste %s : échec de récupération (%s)", aid, exc)
+                    if failures_in_a_row >= config.APPLE_MAX_FAILURES:
+                        raise RuntimeError(
+                            f"Apple ne répond plus ({failures_in_a_row} échecs d'affilée) : scan interrompu. "
+                            "Il sera refait au prochain récap, rien ne sera perdu."
+                        ) from exc
+                    continue
+            failures_in_a_row = 0
+            catalog[aid] = rels
+            for rel in rels:
+                if rel.release_date >= since:
+                    found[rel.album_id] = rel  # un feat. peut apparaître chez plusieurs artistes
 
     if config.FEATURES_ENABLED:
         known = [rel for rels in catalog.values() for rel in rels] + storage.all_releases()
