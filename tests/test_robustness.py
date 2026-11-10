@@ -218,3 +218,30 @@ def test_user_is_told_when_a_scan_is_already_running():
         return upd.message.reply_text.call_args.args[0]
 
     assert "déjà en cours" in run(scenario())
+
+
+def test_incomplete_apple_track_of_a_musicbrainz_feature_does_not_break_the_scan(itunes, mb):
+    follow(("Quavo", 10))
+    itunes.albums = {10: [collection(100, "Neuf - Single", days_ago=1, artist="Quavo")]}
+    mb.artists = {"Quavo": [{"id": "mb-q", "name": "Quavo"}]}
+    mb.apple_links = {"mb-q": [10]}
+    ago = (clock.today() - timedelta(days=3)).isoformat()
+    mb.recordings = {"mb-q": [
+        recording("Sans date", [("Autre", "mb-a"), ("Quavo", "mb-q")], ago),
+        recording("Date illisible", [("Autre", "mb-a"), ("Quavo", "mb-q")], ago),
+        recording("Sans ID", [("Autre", "mb-a"), ("Quavo", "mb-q")], ago),
+        recording("Correct", [("Autre", "mb-a"), ("Quavo", "mb-q")], ago),
+    ]}
+    no_date = song(9201, "Sans date (feat. Quavo)", "Autre", "Album", 92, days_ago=3)
+    del no_date["releaseDate"]
+    bad_date = song(9202, "Date illisible (feat. Quavo)", "Autre", "Album", 92, days_ago=3)
+    bad_date["releaseDate"] = "bientôt"
+    no_id = song(9203, "Sans ID (feat. Quavo)", "Autre", "Album", 92, days_ago=3)
+    del no_id["trackId"]
+    itunes.songs = {
+        "Autre Sans date": [no_date],
+        "Autre Date illisible": [bad_date],
+        "Autre Sans ID": [no_id],
+        "Autre Correct": [song(9204, "Correct (feat. Quavo)", "Autre", "Album", 92, days_ago=3)],
+    }
+    assert sorted(r.album_id for r in scan.catchup_batch(14).releases) == [100, 9204]

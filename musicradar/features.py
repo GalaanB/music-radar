@@ -176,7 +176,11 @@ def from_musicbrainz(
             continue
         if text.already_out(known_titles, t.get("artistName", ""), t.get("trackName", "")):
             continue  # même titre déjà connu sous une autre fiche Apple
-        rel = release_from_track(t, artist_id, name)
+        try:
+            rel = release_from_track(t, artist_id, name)
+        except (KeyError, ValueError) as exc:  # fiche Apple incomplète : pas de quoi arrêter le scan
+            logger.warning("Titre ignoré (%s) : %s", exc, t.get("trackName"))
+            continue
         if rel.release_date >= since:  # pas une vieille version du titre chez Apple
             out.append(rel)
     return out
