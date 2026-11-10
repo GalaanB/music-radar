@@ -157,10 +157,10 @@ ne touche jamais au token, à la liste d'artistes ni à la base.
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | — | Bot et seul chat autorisé |
-| `DAILY_TIME`, `WEEKLY_TIME` | `09:00` | Heure de lancement du scan (Europe/Paris), ~20 min avant le message |
+| `DAILY_TIME`, `WEEKLY_TIME` | `09:00` | Heure de lancement du scan (Europe/Paris), ~5 min avant le message |
 | `SEND_EMPTY_DAILY` | `0` | `1` = message « Rien de nouveau » les jours vides |
 | `DAILY_LOOKBACK_DAYS` | `14` | Jours couverts par le récap quotidien |
-| `FEATURES` | `1` | Recherche des featurings (scan ~15-20 min au lieu de ~10) |
+| `FEATURES` | `1` | Recherche des featurings (l'essentiel des ~5 min du scan) |
 | `MUSICBRAINZ` | `1` | Featurings via MusicBrainz (`0` : recherche par nom chez Apple seulement) |
 | `CARDS_MAX` | `12` | Au-delà : liste compacte + `/trier` |
 | `COVERS` | `small` | Pochette en miniature (`off` pour désactiver) |

@@ -31,7 +31,7 @@ ruff check .
 
 La CI (`.github/workflows/tests.yml`) lance `ruff check .` puis `pytest` à chaque push.
 
-Diagnostic sans rien envoyer sur Telegram (fait de vrais appels Apple, ~10 min) :
+Diagnostic sans rien envoyer sur Telegram (fait de vrais appels Apple, ~5 min) :
 
 ```bash
 python -m musicradar daily        # ou weekly, catchup 30, resolve

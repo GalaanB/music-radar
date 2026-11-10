@@ -22,8 +22,8 @@ scan_lock = asyncio.Lock()
 
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
-SCAN_WAIT = "⏳ Scan en cours (≈ 20 min avec la recherche des featurings)…"
-SCAN_BUSY = "⏳ Un scan est déjà en cours : ta demande démarrera juste après (compte jusqu'à 20 min de plus)."
+SCAN_WAIT = "⏳ Scan en cours (≈ 5 min avec la recherche des featurings)…"
+SCAN_BUSY = "⏳ Un scan est déjà en cours : ta demande démarrera juste après (compte jusqu'à 5 min de plus)."
 
 
 async def reply_wait(update: Update, text: str = SCAN_WAIT) -> None:

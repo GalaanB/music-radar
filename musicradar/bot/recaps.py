@@ -184,7 +184,7 @@ async def cmd_rattrapage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except ValueError:
             await update.message.reply_text("Usage : /rattrapage 30")
             return
-    await ui.reply_wait(update, f"⏳ Scan des {days} derniers jours (≈ 20 min avec la recherche des featurings)…")
+    await ui.reply_wait(update, f"⏳ Scan des {days} derniers jours (≈ 5 min avec la recherche des featurings)…")
     try:
         await do_catchup(context.bot, days)
     except Exception as exc:  # noqa: BLE001
