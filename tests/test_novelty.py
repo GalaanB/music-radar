@@ -232,3 +232,29 @@ def test_deluxe_version_can_be_the_original_of_a_later_edition(itunes):
     complete = release(300, "Album (Complete Edition)", days_ago=1)
     analysis.analyze(complete, {1: [deluxe, complete]})
     assert complete.note == "♻️ réédition · 1 inédit sur 4"
+
+
+# --- « (Réédition) » ----------------------------------------------------------------
+
+@pytest.mark.parametrize("title", [
+    "Album (Réédition)", "Album (Reedition)", "Album (Ré-édition)", "Album - Réédition", "Album [RÉÉDITION 2026]",
+])
+def test_french_reissue_keyword_is_an_edition(title):
+    assert text.split_edition(title) == ("Album", True)
+    assert not text.is_variant(title, album=True)
+
+
+def test_french_reissue_counts_its_new_tracks_and_is_set_aside_when_empty(itunes):
+    itunes.tracks = {100: ["A", "B"], 200: ["A", "B", "C"], 300: ["A", "B"]}
+    base = release(100, "Album", days_ago=30)
+    reissue = release(200, "Album (Réédition)", days_ago=1)
+    analysis.analyze(reissue, {1: [base, reissue]})
+    assert reissue.note == "♻️ réédition · 1 inédit sur 3" and not reissue.nothing_new
+    same = release(300, "Album (Réédition)", days_ago=1)
+    analysis.analyze(same, {1: [base, same]})
+    assert same.note == "♻️ réédition · aucun inédit" and same.nothing_new
+
+
+def test_a_title_that_only_looks_like_a_reissue_is_left_alone():
+    assert text.split_edition("Expédition") == ("Expédition", False)
+    assert text.split_edition("Album (Rééditions de l'âme)") == ("Album (Rééditions de l'âme)", False)

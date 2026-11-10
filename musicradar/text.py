@@ -92,7 +92,7 @@ def kind_and_title(collection_name: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 
 _EDITION_WORDS = (
-    r"(?:deluxe|expanded|extended|anniversary|edition|édition|reissue|re-issue|"
+    r"(?:deluxe|expanded|extended|anniversary|edition|édition|r[ée]-?[ée]dition|reissue|re-issue|"
     r"remaster(?:ed)?|complete|platinum|collector'?s?|special|bonus)"
 )
 _EDITION_WORD_RE = re.compile(rf"\b{_EDITION_WORDS}\b", re.I)
