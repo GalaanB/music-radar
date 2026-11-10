@@ -1,8 +1,9 @@
 """
 Client de l'API publique iTunes / Apple Music (sans clé).
 
-Toutes les requêtes passent par `get_json`, qui attend entre deux appels pour
-rester sous la limite de débit non officielle (~20 requêtes/minute).
+Toutes les requêtes passent par `get_json`, qui espace les appels pour rester
+sous la limite de débit non officielle (~20 requêtes/minute), y compris quand
+plusieurs threads appellent Apple en même temps (scan + /ajouter).
 """
 
 from __future__ import annotations
@@ -16,13 +17,17 @@ import requests
 
 from .. import config, storage, text
 from ..models import Release
+from ..ratelimit import RateLimiter
 
 logger = logging.getLogger("radar.itunes")
 
+_limiter = RateLimiter(lambda: config.REQUEST_DELAY_S)
+
 
 def get_json(url: str, params: dict) -> dict:
-    """GET avec 1 retry en cas d'erreur (403/429/réseau) après une pause."""
+    """GET espacé du précédent, avec 1 retry en cas d'erreur (403/429/réseau) après une pause."""
     for attempt in (1, 2):
+        _limiter.wait()
         try:
             resp = requests.get(url, params=params, timeout=config.HTTP_TIMEOUT_S)
             if resp.status_code in (403, 429):
@@ -35,11 +40,6 @@ def get_json(url: str, params: dict) -> dict:
             logger.warning("Appel iTunes échoué (%s), nouvelle tentative dans 30 s", exc)
             time.sleep(30)
     return {}  # inatteignable, pour le typage
-
-
-def _paced(url: str, params: dict) -> dict:
-    time.sleep(config.REQUEST_DELAY_S)
-    return get_json(url, params)
 
 
 def cover_url(artwork_url: str) -> str:
@@ -71,7 +71,7 @@ def search_artist(name: str) -> tuple[int, str, str, bool] | None:
 
 def search_artists(term: str, limit: int = 5) -> list[dict]:
     """Candidats d'une recherche, dédoublonnés par ID : [{id, name, genre, url}]."""
-    data = _paced(config.ITUNES_SEARCH, {"term": term, "entity": "musicArtist", "limit": 10, "country": config.COUNTRY})
+    data = get_json(config.ITUNES_SEARCH, {"term": term, "entity": "musicArtist", "limit": 10, "country": config.COUNTRY})
     out: list[dict] = []
     seen_ids: set[int] = set()
     for r in data.get("results", []):
@@ -93,7 +93,7 @@ def search_artists(term: str, limit: int = 5) -> list[dict]:
 
 
 def lookup_artist(artist_id: int) -> dict | None:
-    data = _paced(config.ITUNES_LOOKUP, {"id": artist_id, "country": config.COUNTRY})
+    data = get_json(config.ITUNES_LOOKUP, {"id": artist_id, "country": config.COUNTRY})
     for r in data.get("results", []):
         if r.get("wrapperType") == "artist":
             return {
@@ -107,7 +107,7 @@ def lookup_artist(artist_id: int) -> dict | None:
 
 def artist_overview(artist_id: int) -> dict:
     """Genre, lien et dernière sortie d'un artiste, en un seul appel."""
-    data = _paced(
+    data = get_json(
         config.ITUNES_LOOKUP,
         {"id": artist_id, "entity": "album", "limit": config.ALBUMS_PER_ARTIST, "country": config.COUNTRY},
     )
@@ -140,7 +140,7 @@ def name_is_unique(artist_id: int, name: str) -> bool:
     cached = storage.cached_name_reliability(artist_id)
     if cached is not None:
         return cached
-    data = _paced(config.ITUNES_SEARCH, {"term": name, "entity": "musicArtist", "limit": 25, "country": config.COUNTRY})
+    data = get_json(config.ITUNES_SEARCH, {"term": name, "entity": "musicArtist", "limit": 25, "country": config.COUNTRY})
     key = text.cmp_key(name)
     same_name = {r.get("artistId") for r in data.get("results", []) if text.cmp_key(r.get("artistName", "")) == key}
     reliable = same_name <= {artist_id}
@@ -194,7 +194,6 @@ def fetch_artist_releases(itunes_id: int) -> list[Release]:
 
 def recent_releases(artist_id: int, n: int = 3) -> list[Release]:
     """Les n sorties les plus récentes d'un artiste (pour vérifier que c'est le bon)."""
-    time.sleep(config.REQUEST_DELAY_S)
     rels = fetch_artist_releases(artist_id)
     return sorted(rels, key=lambda r: r.release_date, reverse=True)[:n]
 
@@ -204,7 +203,7 @@ def tracks_of(album_id: int) -> list[str]:
     cached = storage.cached_tracks(album_id)
     if cached:
         return cached
-    data = _paced(config.ITUNES_LOOKUP, {"id": album_id, "entity": "song", "limit": 200, "country": config.COUNTRY})
+    data = get_json(config.ITUNES_LOOKUP, {"id": album_id, "entity": "song", "limit": 200, "country": config.COUNTRY})
     items = [
         (int(i.get("discNumber") or 1), int(i.get("trackNumber") or 0), i["trackName"])
         for i in data.get("results", [])

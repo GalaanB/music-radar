@@ -75,6 +75,7 @@ seul. L'interface Telegram (`musicradar/bot/`) ne fait qu'appeler ce cœur.
 | Module | Rôle |
 |---|---|
 | `config.py`, `clock.py` | Réglages (`.env`) et date du jour |
+| `ratelimit.py` | Délai minimal entre deux appels à un même service |
 | `models.py` | `Release`, `Batch`, `Prepared` et états de tri |
 | `text.py` | Normalisation des noms et titres, éditions, versions alternatives |
 | `storage.py` | Base SQLite : schéma, migrations, file de tri, sauvegardes |
@@ -100,8 +101,9 @@ docker compose exec music-radar python -m musicradar daily     # ou weekly, reso
 ### Choix techniques
 
 - **Respect du débit iTunes** (~20 requêtes/min, limite non officielle) :
-  3,2 s entre deux appels, un seul scan à la fois (`asyncio.Lock`), appels
-  bloquants dans `asyncio.to_thread` pour ne jamais figer le bot.
+  3,2 s entre deux appels, garantis par un limiteur commun à tous les threads
+  (`ratelimit.py`), un seul scan à la fois (`asyncio.Lock`), appels bloquants
+  dans `asyncio.to_thread` pour ne jamais figer le bot.
 - **Pas de doublon de notification** : une sortie n'est marquée « notifiée »
   qu'après l'envoi réussi sur Telegram ; en cas d'échec, elle repart au récap
   suivant.

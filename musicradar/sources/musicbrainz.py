@@ -16,9 +16,12 @@ from datetime import date
 import requests
 
 from .. import config, storage, text
+from ..ratelimit import RateLimiter
 from . import itunes
 
 logger = logging.getLogger("radar.musicbrainz")
+
+_limiter = RateLimiter(lambda: config.MB_DELAY_S)
 
 _APPLE_ID_IN_URL_RE = re.compile(r"(?:music|itunes)\.apple\.com/.*?/(?:id)?(\d+)(?:[/?#]|$)")
 
@@ -26,7 +29,7 @@ _APPLE_ID_IN_URL_RE = re.compile(r"(?:music|itunes)\.apple\.com/.*?/(?:id)?(\d+)
 def get(path: str, params: dict) -> dict:
     """GET MusicBrainz (JSON), en respectant 1 requête/s ; 1 retry si saturé (503)."""
     for attempt in (1, 2):
-        time.sleep(config.MB_DELAY_S)
+        _limiter.wait()
         resp = requests.get(
             f"{config.MB_API}/{path}",
             params={**params, "fmt": "json"},

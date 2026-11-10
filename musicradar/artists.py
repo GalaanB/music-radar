@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import re
 import threading
-import time
 
 from . import config, storage, text
 from .sources import itunes
@@ -178,7 +177,6 @@ def resolve() -> dict:
             bilan["cached"] += 1
             continue
 
-        time.sleep(config.REQUEST_DELAY_S)
         try:
             found = itunes.search_artist(name)
         except Exception as exc:  # noqa: BLE001

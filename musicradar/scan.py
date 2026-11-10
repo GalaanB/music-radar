@@ -6,7 +6,6 @@ quotidien, vendredi (avec les sorties à venir) et rattrapage.
 from __future__ import annotations
 
 import logging
-import time
 from datetime import date, timedelta
 
 from . import clock, config, features, storage
@@ -52,7 +51,6 @@ def scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
     errors = 0
     failures_in_a_row = 0
     for aid in names:
-        time.sleep(config.REQUEST_DELAY_S)
         try:
             rels = itunes.fetch_artist_releases(aid)
         except Exception as exc:

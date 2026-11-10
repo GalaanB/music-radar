@@ -44,6 +44,7 @@ Paquet `musicradar/`, chaque module ne dépend que de ceux au-dessus de lui
 
 ```
 config, clock      réglages (.env) et date du jour (Europe/Paris)
+ratelimit          délai minimal entre deux appels à un même service
 text               fonctions pures : normalisation, crédits, éditions, variantes
 models             Release, Batch, Prepared, états de tri
 storage            SQLite (data/radar.db) : TOUT le SQL du projet est ici
@@ -74,7 +75,9 @@ Le cœur ne dépend pas de Telegram ; `bot/` ne fait que l'appeler.
 
 - **Débit** : Apple tolère ~20 requêtes/min (3,2 s entre deux appels,
   `config.REQUEST_DELAY_S`), MusicBrainz 1 requête/s. Tout appel Apple doit
-  passer par `itunes.get_json`, tout appel MusicBrainz par `musicbrainz.get`.
+  passer par `itunes.get_json`, tout appel MusicBrainz par `musicbrainz.get` :
+  ce sont eux qui espacent les appels (`ratelimit.RateLimiter`, commun à tous
+  les threads). Ne pas ajouter de `time.sleep` ailleurs.
 - **Tables** : `artists`, `seen` (notifié), `releases` (tri + analyse), `tracks`
   (cache des titres), `feature_names`, `mb_artists`, `verified`, `meta`.
   `seen` et `releases` sont distinctes : une sortie peut être dans l'une sans l'autre.

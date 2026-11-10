@@ -6,6 +6,7 @@ Organisation du paquet (chaque module ne dépend que de ceux du dessus) :
 
     config        réglages (variables d'environnement) et constantes
     clock         date du jour (fuseau Europe/Paris)
+    ratelimit     délai minimal entre deux appels à un même service
     text          normalisation des noms et des titres, crédits, éditions, variantes
     models        Release, Batch, Prepared, états de tri
     storage       base SQLite : sorties, tri, caches, migrations, sauvegardes

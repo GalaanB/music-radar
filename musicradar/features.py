@@ -12,7 +12,6 @@ Deux sources, dans cet ordre :
 from __future__ import annotations
 
 import logging
-import time
 from datetime import date, datetime, timedelta
 
 import requests
@@ -78,7 +77,6 @@ def from_apple_search(
 
 def _apple_track(title: str, primary: str) -> dict | None:
     """Retrouve chez Apple un titre repéré dans MusicBrainz (lien, pochette, date)."""
-    time.sleep(config.REQUEST_DELAY_S)
     want, who = text.norm_title(title), text.cmp_key(primary)
     for t in itunes.search_songs(f"{primary} {title}", limit=15):
         if text.norm_title(t.get("trackName", "")) == want and who in text.credited(
@@ -174,7 +172,6 @@ def find(
                     logger.warning("MusicBrainz ne répond plus : recherche Apple pour la suite du scan")
         try:
             if feats is None and reliable:
-                time.sleep(config.REQUEST_DELAY_S)
                 feats = from_apple_search(aid, name, since, known_albums, known_titles)
             found += feats or []
         except Exception as exc:  # noqa: BLE001
