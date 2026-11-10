@@ -46,6 +46,19 @@ def scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
     if not names:
         raise RuntimeError("Aucun artiste résolu : lance d'abord /actualiser.")
 
+    # MusicBrainz a sa propre limite de débit : on l'interroge dès maintenant,
+    # en parallèle de la lecture des catalogues chez Apple.
+    prefetch = features.MusicBrainzPrefetch(names, since) if config.FEATURES_ENABLED else None
+    try:
+        return _scan(names, since, prefetch)
+    finally:
+        if prefetch:
+            prefetch.close()
+
+
+def _scan(
+    names: dict[int, str], since: date, prefetch: features.MusicBrainzPrefetch | None
+) -> tuple[list[Release], dict[int, list[Release]]]:
     found: dict[int, Release] = {}
     catalog: dict[int, list[Release]] = {}
     errors = 0
@@ -71,7 +84,7 @@ def scan(since: date) -> tuple[list[Release], dict[int, list[Release]]]:
 
     if config.FEATURES_ENABLED:
         known = [rel for rels in catalog.values() for rel in rels] + storage.all_releases()
-        feats, feat_errors = features.find(names, since, known, set(found))
+        feats, feat_errors = features.find(names, since, known, set(found), prefetch)
         errors += feat_errors
         for rel in feats:
             found.setdefault(rel.album_id, rel)

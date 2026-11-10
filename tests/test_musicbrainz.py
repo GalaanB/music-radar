@@ -149,3 +149,64 @@ def test_featuring_twins_already_waiting_are_removed_at_startup():
     storage.migrate()
     assert storage.get_release(300) and storage.get_release(3002)
     assert storage.get_release(3001) is None
+
+
+# --- MusicBrainz interrogé en parallèle des catalogues Apple --------------------
+
+def test_musicbrainz_is_queried_while_apple_catalogs_are_read(quavo, monkeypatch):
+    import threading
+
+    from musicradar.sources import itunes as itunes_api
+
+    itunes, mb = quavo
+    mb_started = threading.Event()
+    order = []
+    real_mb, real_apple = mb.__call__, itunes.__call__
+
+    def mb_get(path, params):
+        order.append("musicbrainz")
+        mb_started.set()
+        return real_mb(path, params)
+
+    def apple_get(url, params):
+        if params.get("entity") == "album":
+            # Le catalogue ne répond qu'une fois MusicBrainz interrogé : sans
+            # thread à part, ce test resterait bloqué jusqu'au délai.
+            assert mb_started.wait(timeout=5)
+            order.append("catalogue")
+        return real_apple(url, params)
+
+    monkeypatch.setattr(musicbrainz, "get", mb_get)
+    monkeypatch.setattr(itunes_api, "get_json", apple_get)
+    assert 9001 in {r.album_id for r in scan.catchup_batch(14).releases}
+    assert order[0] == "musicbrainz" and "catalogue" in order
+
+
+def test_interrupted_scan_leaves_no_musicbrainz_thread_behind(itunes, mb, monkeypatch):
+    import threading
+
+    import requests
+
+    from musicradar.sources import itunes as itunes_api
+
+    conn = storage.connect()
+    conn.executemany("INSERT INTO artists VALUES (?, ?, ?)", [(f"A{i}", i, f"A{i}") for i in range(1, 30)])
+    conn.commit()
+    conn.close()
+
+    def down(url, params):
+        raise requests.ConnectionError("Apple down")
+
+    monkeypatch.setattr(itunes_api, "get_json", down)
+    with pytest.raises(RuntimeError, match="Apple ne répond plus"):
+        scan.catchup_batch(14)
+    assert not [t for t in threading.enumerate() if t.name.startswith("musicbrainz")]
+
+
+def test_a_bug_while_reading_musicbrainz_is_not_swallowed(quavo, monkeypatch):
+    def broken(artist_id, name):
+        raise KeyError("id")
+
+    monkeypatch.setattr(musicbrainz, "mbid_for", broken)
+    with pytest.raises(KeyError):
+        scan.catchup_batch(14)

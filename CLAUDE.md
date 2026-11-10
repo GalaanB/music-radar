@@ -66,6 +66,9 @@ Le cœur ne dépend pas de Telegram ; `bot/` ne fait que l'appeler.
 
 1. `scan.daily_batch()` : catalogue de chaque artiste (`itunes.fetch_artist_releases`),
    puis `features.find`, puis `scan.dedupe`, puis filtre des sorties déjà notifiées.
+   MusicBrainz est interrogé en parallèle dès le début du scan, dans un seul
+   thread (`features.MusicBrainzPrefetch`) ; `features.find` en lit les
+   réponses dans l'ordre des artistes, donc le résultat ne dépend pas du thread.
 2. `pipeline.prepare()` : reprend le tri existant, absorbe les fiches jumelles,
    lance `analysis.analyze` sur ce qui n'est pas trié, enregistre.
 3. `recaps.deliver()` : envoi Telegram.

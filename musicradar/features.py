@@ -7,11 +7,16 @@ Deux sources, dans cet ordre :
    un nom porté par plusieurs artistes), puis le titre est retrouvé chez Apple.
 2. Recherche par nom chez Apple, pour les artistes absents de MusicBrainz et
    seulement si leur nom est porté par un seul artiste (sinon : confusions).
+
+MusicBrainz et Apple ont chacun leur limite de débit : MusicBrainz est
+interrogé dans un thread à part (`MusicBrainzPrefetch`), pendant que le scan
+lit les catalogues chez Apple.
 """
 
 from __future__ import annotations
 
 import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 import requests
@@ -86,24 +91,69 @@ def _apple_track(title: str, primary: str) -> dict | None:
     return None
 
 
+class MusicBrainzPrefetch:
+    """
+    Interroge MusicBrainz pour chaque artiste suivi, dans l'ordre, sans attendre
+    que le scan en ait besoin : fiche de l'artiste (MBID) puis enregistrements
+    où il est crédité. Un seul thread, donc une requête à la fois.
+
+    Coupe-circuit : après MB_MAX_FAILURES échecs d'affilée, les artistes
+    suivants ne sont plus demandés (la recherche Apple prend le relais).
+    """
+
+    def __init__(self, names: dict[int, str], since: date) -> None:
+        self._since = since
+        self._until = clock.today() + timedelta(days=config.UPCOMING_DAYS)
+        self._failures = 0  # lu et modifié par le seul thread de travail
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="musicbrainz")
+        self._futures: dict[int, Future] = {}
+        if config.MUSICBRAINZ_ENABLED:
+            self._futures = {aid: self._pool.submit(self._fetch, aid, name) for aid, name in names.items()}
+
+    def _fetch(self, artist_id: int, name: str) -> tuple[str | None, list[dict]] | None:
+        if self._failures >= config.MB_MAX_FAILURES:
+            return None
+        try:
+            mbid = musicbrainz.mbid_for(artist_id, name)
+            recordings = musicbrainz.recordings_crediting(mbid, self._since, self._until) if mbid else []
+        except requests.RequestException:
+            self._failures += 1
+            raise
+        self._failures = 0
+        return mbid, recordings
+
+    def result(self, artist_id: int) -> tuple[str | None, list[dict]] | None:
+        """
+        (MBID ou None, enregistrements) de l'artiste, en attendant si besoin que
+        son tour soit passé. None si MusicBrainz n'a pas été interrogé (désactivé
+        ou coupe-circuit). Relève l'erreur réseau rencontrée, le cas échéant.
+        """
+        future = self._futures.get(artist_id)
+        return future.result() if future else None
+
+    def close(self) -> None:
+        """Abandonne ce qui n'a pas commencé et attend la fin de la requête en cours."""
+        self._pool.shutdown(wait=True, cancel_futures=True)
+
+
 def from_musicbrainz(
     artist_id: int,
     name: str,
     mbid: str,
+    recordings: list[dict],
     since: date,
     known_albums: set[int],
     known_titles: text.TitleIndex,
 ) -> list[Release]:
     """
     Titres récents où l'artiste est crédité sans être l'artiste principal,
-    d'après MusicBrainz, puis retrouvés chez Apple. La première date de sortie
-    doit être dans la période (une vieille chanson sur une compilation récente
-    ne compte pas).
+    d'après MusicBrainz (`recordings`), puis retrouvés chez Apple. La première
+    date de sortie doit être dans la période (une vieille chanson sur une
+    compilation récente ne compte pas).
     """
-    until = clock.today() + timedelta(days=config.UPCOMING_DAYS)
     out: list[Release] = []
     seen_titles: set[tuple[str, str]] = set()
-    for rec in musicbrainz.recordings_crediting(mbid, since, until):
+    for rec in recordings:
         credits = rec.get("artist-credit", [])
         if not credits or credits[0].get("artist", {}).get("id") == mbid:
             continue  # titre de l'artiste lui-même : déjà dans ses sorties Apple
@@ -137,12 +187,30 @@ def find(
     since: date,
     known: list[Release],
     already_found: set[int],
+    prefetch: MusicBrainzPrefetch | None = None,
 ) -> tuple[list[Release], int]:
     """
     Featurings de tous les artistes suivis. `known` : sorties déjà connues
     (catalogues + base), pour ne pas renvoyer un feat déjà notifié en single.
-    Retourne (featurings, nombre d'erreurs).
+    `prefetch` : interrogation de MusicBrainz déjà lancée par le scan (sinon
+    elle est lancée ici). Retourne (featurings, nombre d'erreurs).
     """
+    own_prefetch = prefetch is None
+    prefetch = prefetch or MusicBrainzPrefetch(names, since)
+    try:
+        return _find(names, since, known, already_found, prefetch)
+    finally:
+        if own_prefetch:
+            prefetch.close()
+
+
+def _find(
+    names: dict[int, str],
+    since: date,
+    known: list[Release],
+    already_found: set[int],
+    prefetch: MusicBrainzPrefetch,
+) -> tuple[list[Release], int]:
     known_albums = already_found | {rel.album_id for rel in known}
     known_titles = text.title_index((r.title, r.artist) for r in known if r.kind != KIND_FEATURING)
     found: list[Release] = []
@@ -159,17 +227,18 @@ def find(
             unreliable.append(aid)  # ses anciens featurings « par nom » sont douteux
 
         feats: list[Release] | None = None
-        if config.MUSICBRAINZ_ENABLED and mb_failures < config.MB_MAX_FAILURES:
-            try:
-                mbid = musicbrainz.mbid_for(aid, name)
+        try:
+            answer = prefetch.result(aid)
+            if answer is not None:
+                mbid, recordings = answer
                 if mbid:
-                    feats = from_musicbrainz(aid, name, mbid, since, known_albums, known_titles)
+                    feats = from_musicbrainz(aid, name, mbid, recordings, since, known_albums, known_titles)
                 mb_failures = 0
-            except requests.RequestException as exc:
-                mb_failures += 1
-                logger.warning("MusicBrainz indisponible pour %s (%s)", name, exc)
-                if mb_failures == config.MB_MAX_FAILURES:
-                    logger.warning("MusicBrainz ne répond plus : recherche Apple pour la suite du scan")
+        except requests.RequestException as exc:
+            mb_failures += 1
+            logger.warning("MusicBrainz indisponible pour %s (%s)", name, exc)
+            if mb_failures == config.MB_MAX_FAILURES:
+                logger.warning("MusicBrainz ne répond plus : recherche Apple pour la suite du scan")
         try:
             if feats is None and reliable:
                 feats = from_apple_search(aid, name, since, known_albums, known_titles)

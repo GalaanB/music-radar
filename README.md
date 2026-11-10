@@ -104,6 +104,9 @@ docker compose exec music-radar python -m musicradar daily     # ou weekly, reso
   3,2 s entre deux appels, garantis par un limiteur commun à tous les threads
   (`ratelimit.py`), un seul scan à la fois (`asyncio.Lock`), appels bloquants
   dans `asyncio.to_thread` pour ne jamais figer le bot.
+- **MusicBrainz en parallèle** : sa limite de débit (1 requête/s) est
+  indépendante de celle d'Apple, il est donc interrogé dans un thread à part
+  pendant que le scan lit les catalogues.
 - **Pas de doublon de notification** : une sortie n'est marquée « notifiée »
   qu'après l'envoi réussi sur Telegram ; en cas d'échec, elle repart au récap
   suivant.
