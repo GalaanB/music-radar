@@ -146,10 +146,25 @@ def cached_name_reliability(itunes_id: int) -> bool | None:
 
 
 def save_name_reliability(itunes_id: int, reliable: bool) -> None:
-    _write(
+    """
+    Mémorise la vérification. Quand un nom DEVIENT ambigu (il ne l'était pas à
+    la vérification précédente, ou c'est la première), les featurings non triés
+    de l'artiste sont retirés de /trier : ils ont pu être trouvés par son nom
+    seul, donc être ceux d'un homonyme. Tant que le nom reste ambigu, rien
+    n'est retiré : ses featurings viennent alors de MusicBrainz, qui relie les
+    invités par identifiant.
+    """
+    conn = connect()
+    row = conn.execute("SELECT reliable FROM feature_names WHERE itunes_id = ?", (itunes_id,)).fetchone()
+    conn.execute(
         "INSERT OR REPLACE INTO feature_names VALUES (?, ?, ?)",
         (itunes_id, int(reliable), clock.today().isoformat()),
     )
+    conn.commit()
+    conn.close()
+    was_ambiguous = row is not None and not row[0]
+    if not reliable and not was_ambiguous:
+        drop_pending_features([itunes_id])
 
 
 def cached_mbid(itunes_id: int) -> tuple[bool, str | None]:

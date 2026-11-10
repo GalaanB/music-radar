@@ -135,7 +135,9 @@ def name_is_unique(artist_id: int, name: str) -> bool:
     Un featuring repéré par recherche n'est identifié que par le nom écrit dans
     le titre (« feat. SAM ») : Apple ne donne pas l'ID de l'invité. Si plusieurs
     artistes portent ce nom chez Apple (SAM, Luv, Dau…), on ne peut pas savoir
-    lequel est crédité. Vérifié une fois, puis tous les 30 jours.
+    lequel est crédité. Vérifié une fois, puis tous les 30 jours. Si le nom
+    devient ambigu, les featurings non triés de l'artiste sont retirés de /trier
+    (voir storage.save_name_reliability).
     """
     cached = storage.cached_name_reliability(artist_id)
     if cached is not None:

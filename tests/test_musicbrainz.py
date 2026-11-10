@@ -210,3 +210,65 @@ def test_a_bug_while_reading_musicbrainz_is_not_swallowed(quavo, monkeypatch):
     monkeypatch.setattr(musicbrainz, "mbid_for", broken)
     with pytest.raises(KeyError):
         scan.catchup_batch(14)
+
+
+# --- les featurings MusicBrainz d'un artiste au nom ambigu restent dans /trier ----
+
+@pytest.fixture
+def ambiguous_sam(itunes, mb):
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('SAM', 7, 'SAM')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {7: []}
+    itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}, {"artistId": 8, "artistName": "Sam"}]}
+    mb.artists = {"SAM": [{"id": "mb-sam", "name": "SAM"}]}
+    mb.apple_links = {"mb-sam": [7]}
+    mb.recordings = {"mb-sam": [recording("Feu", [("Autre", "mb-x"), ("SAM", "mb-sam")], ago(3))]}
+    itunes.songs = {"Autre Feu": [song(7001, "Feu (feat. SAM)", "Autre", "Projet", 70, days_ago=3)]}
+    return itunes, mb
+
+
+def test_musicbrainz_feature_of_an_ambiguous_artist_stays_in_the_queue_next_day(ambiguous_sam):
+    from musicradar import pipeline
+
+    first = pipeline.prepare(scan.daily_batch())
+    assert [r.album_id for r in first.to_show] == [7001]
+    pipeline.finalize(first)                       # carte reçue, pas encore triée
+    assert scan.daily_batch().releases == []       # le lendemain : rien de neuf…
+    waiting = storage.get_release(7001)            # … et la carte d'hier répond toujours
+    assert waiting is not None and waiting.state == models.STATE_NEW
+    assert storage.count_state(models.STATE_NEW) == 1
+
+
+def test_name_that_becomes_ambiguous_loses_its_name_based_features_once(itunes, mb):
+    from conftest import release
+    from musicradar import pipeline
+
+    conn = storage.connect()
+    conn.execute("INSERT INTO artists VALUES ('SAM', 7, 'SAM')")
+    conn.commit()
+    conn.close()
+    itunes.albums = {7: []}
+    itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}]}   # nom unique pour l'instant
+    itunes.songs = {"SAM": [song(700, "Love (feat. Sam)", "Chanteuse Pop", "Pop Album", 70, days_ago=2)]}
+    pipeline.finalize(pipeline.prepare(scan.daily_batch()))
+    assert storage.get_release(700) is not None     # trouvé par le nom seul
+
+    # 30 jours plus tard, un deuxième « Sam » existe chez Apple.
+    conn = storage.connect()
+    conn.execute("UPDATE feature_names SET checked_on = '2020-01-01'")
+    conn.commit()
+    conn.close()
+    itunes.search = {"SAM": [{"artistId": 7, "artistName": "SAM"}, {"artistId": 8, "artistName": "Sam"}]}
+    scan.daily_batch()
+    assert storage.get_release(700) is None         # douteux : retiré de /trier
+
+    # Nouvelle vérification, nom toujours ambigu : ce qui attend n'est plus touché.
+    storage.save_releases([release(7001, "Feu (feat. SAM)", models.KIND_FEATURING, artist_id=7)])
+    conn = storage.connect()
+    conn.execute("UPDATE feature_names SET checked_on = '2020-01-01'")
+    conn.commit()
+    conn.close()
+    scan.daily_batch()
+    assert storage.get_release(7001) is not None

@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 
 import requests
 
-from . import clock, config, storage, text
+from . import clock, config, text
 from .models import KIND_FEATURING, Release
 from .sources import itunes, musicbrainz
 
@@ -214,17 +214,14 @@ def _find(
     known_albums = already_found | {rel.album_id for rel in known}
     known_titles = text.title_index((r.title, r.artist) for r in known if r.kind != KIND_FEATURING)
     found: list[Release] = []
-    unreliable: list[int] = []
     errors = 0
     mb_failures = 0
     for aid, name in names.items():
         try:
             reliable: bool | None = itunes.name_is_unique(aid, name)
         except Exception as exc:  # noqa: BLE001
-            reliable = None  # inconnu : ni purge, ni recherche par nom
+            reliable = None  # inconnu : pas de recherche par nom
             logger.warning("Vérification du nom de %s impossible (%s)", name, exc)
-        if reliable is False:
-            unreliable.append(aid)  # ses anciens featurings « par nom » sont douteux
 
         feats: list[Release] | None = None
         try:
@@ -247,5 +244,4 @@ def _find(
             errors += 1
             logger.error("Featurings de %s : échec de la recherche (%s)", name, exc)
 
-    storage.drop_pending_features(unreliable)
     return found, errors
