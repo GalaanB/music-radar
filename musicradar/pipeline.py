@@ -22,7 +22,7 @@ def _absorb_twins(rels: list[Release]) -> dict[int, str]:
     inherited: dict[int, str] = {}
     to_delete: list[int] = []
     for r in rels:
-        twins = [t for t in by_key.get(r.dup_key, []) if t.album_id != r.album_id]
+        twins = [t for t in by_key.get(r.dup_key, []) if t.album_id != r.album_id and r.is_same_release(t)]
         if not twins:
             continue
         decided = next((t.state for t in twins if t.state != STATE_NEW), None)

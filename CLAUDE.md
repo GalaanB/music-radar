@@ -86,8 +86,9 @@ Le cœur ne dépend pas de Telegram ; `bot/` ne fait que l'appeler.
   `seen` et `releases` sont distinctes : une sortie peut être dans l'une sans l'autre.
 - **`album_id`** est l'ID Apple de l'album, ou l'ID du *titre* pour un featuring
   (`kind == "Featuring"`).
-- **`Release.dup_key`** (artiste, type, titre normalisé) identifie une même
-  sortie publiée sous plusieurs fiches Apple (explicite / clean).
+- **`Release.is_same_release`** : deux fiches Apple sont la même sortie
+  (explicite / clean) si elles ont la même `dup_key` (artiste, type, titre
+  normalisé) et des dates à 30 jours d'écart au plus (`config.TWIN_MAX_DAYS`).
 - **Catalogue plafonné à 200 fiches par artiste** par l'API, et `sort=recent`
   n'est pas fiable : on lit tout.
 - **`artists.txt`** est monté en fichier unique dans le conteneur : il se

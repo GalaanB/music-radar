@@ -37,7 +37,8 @@ remplace la veille manuelle par un message quotidien trié.
   rattachées à leur original : « 🔁 version slowed de « Album » ».
 - **Dédoublonnage** : Apple publie souvent plusieurs fiches pour une même sortie
   (explicite / clean). Une seule est gardée, de préférence l'explicite, et le
-  tri déjà fait est conservé.
+  tri déjà fait est conservé. Deux sorties de même titre à plus de 30 jours
+  d'écart restent deux sorties distinctes.
 - **Gestion des artistes depuis Telegram** : `/ajouter` accepte un nom ou le
   lien de la page Apple Music, et propose des boutons en cas d'homonymes.
   `/verifier` liste les artistes au nom ambigu pour confirmer ou changer d'homonyme.

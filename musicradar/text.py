@@ -55,7 +55,10 @@ def norm_title(title: str) -> str:
     t = _NOISE_PAREN_RE.sub(" ", t)
     t = _FEAT_TAIL_RE.sub("", t)
     t = re.sub(r"[^\w\s]", " ", t)
-    return re.sub(r"\s+", " ", t).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+    # Titre sans lettre ni chiffre (« ? », « !!! », un emoji) : on compare le
+    # titre brut, sinon tous ces titres seraient « identiques ».
+    return t or re.sub(r"\s+", " ", strip_accents(title).casefold()).strip()
 
 
 def short_title(title: str) -> str:

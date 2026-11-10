@@ -24,14 +24,20 @@ def dedupe(releases: list[Release]) -> list[Release]:
     """
     Apple publie souvent plusieurs fiches pour une même sortie (version
     explicite + version "clean", ou doublon de catalogue), avec des ID
-    différents. On n'en garde qu'une par (artiste, type, titre).
+    différents. On n'en garde qu'une par (artiste, type, titre), tant que
+    leurs dates sont proches (voir Release.is_same_release).
     """
-    best: dict[tuple[str, str, str], Release] = {}
+    groups: dict[tuple[str, str, str], list[Release]] = {}
     for r in releases:
-        cur = best.get(r.dup_key)
-        if cur is None or _rank(r) < _rank(cur):
-            best[r.dup_key] = r
-    keep = {id(r) for r in best.values()}
+        group = groups.setdefault(r.dup_key, [])
+        for i, cur in enumerate(group):
+            if r.is_same_release(cur):
+                if _rank(r) < _rank(cur):
+                    group[i] = r
+                break
+        else:
+            group.append(r)
+    keep = {id(r) for group in groups.values() for r in group}
     return [r for r in releases if id(r) in keep]
 
 
@@ -116,10 +122,13 @@ def _only_unnotified(batch: Batch) -> Batch:
     # "clean" hier, l'explicite aujourd'hui) : pas de deuxième notification.
     # On ne regarde que les fiches réellement notifiées : une sortie enregistrée
     # lors d'un envoi qui a échoué doit repartir au récap suivant.
-    notified = {r.dup_key: r.album_id for r in storage.all_releases() if r.album_id in seen}
+    notified: dict[tuple[str, str, str], list[Release]] = {}
+    for row in storage.all_releases():
+        if row.album_id in seen:
+            notified.setdefault(row.dup_key, []).append(row)
     batch.releases = [
         r for r in batch.releases
-        if r.album_id not in seen and notified.get(r.dup_key, r.album_id) == r.album_id
+        if r.album_id not in seen and not any(r.is_same_release(n) for n in notified.get(r.dup_key, []))
     ]
     return batch
 

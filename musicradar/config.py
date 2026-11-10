@@ -31,6 +31,12 @@ UPCOMING_DAYS = int(os.getenv("UPCOMING_DAYS", "7"))
 UPCOMING_MAX_LINES = int(os.getenv("UPCOMING_MAX", "8"))
 TELEGRAM_MAX_LEN = 4000  # limite Telegram = 4096, petite marge de sécurité
 
+# --- Dédoublonnage ---
+# Deux fiches Apple de même artiste, même type et même titre sont la même
+# sortie (explicite / clean) si leurs dates sont à moins de N jours d'écart.
+# Au-delà, ce sont deux sorties homonymes (un 2e « Freestyle » deux ans après).
+TWIN_MAX_DAYS = 30
+
 # --- Analyse de nouveauté (1 appel Apple de plus par album/EP analysé) ---
 NOVELTY_ENABLED = os.getenv("NOVELTY", "1") == "1"
 

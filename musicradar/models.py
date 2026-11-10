@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from . import text
+from . import config, text
 
 # États possibles d'une sortie dans ton tri.
 STATE_NEW = "new"              # notifiée, pas encore triée
@@ -39,8 +39,20 @@ class Release:
 
     @property
     def dup_key(self) -> tuple[str, str, str]:
-        """Même artiste + même type + même titre = même sortie, quel que soit l'ID."""
+        """Même artiste + même type + même titre : condition nécessaire pour être la même sortie."""
         return (text.cmp_key(self.artist), self.kind, text.norm_title(self.title))
+
+    def is_same_release(self, other: Release) -> bool:
+        """
+        Deux fiches d'une même sortie (explicite / clean, doublon de catalogue) :
+        même clé, et dates de sortie proches. Deux sorties homonymes éloignées
+        dans le temps (un 2e « Freestyle » deux ans après, « Song » puis
+        « Song (feat. X) » trois mois plus tard) restent deux sorties.
+        """
+        return (
+            self.dup_key == other.dup_key
+            and abs((self.release_date - other.release_date).days) <= config.TWIN_MAX_DAYS
+        )
 
     @property
     def is_edition(self) -> bool:
