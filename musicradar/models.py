@@ -54,7 +54,7 @@ class Release:
     @property
     def is_variant(self) -> bool:
         """Version slowed, sped up, instrumentale, remix… d'une autre sortie."""
-        return text.is_variant(self.title)
+        return text.is_variant(self.title, album=self.kind in ("Album", "EP"))
 
 
 @dataclass

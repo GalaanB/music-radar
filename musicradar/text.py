@@ -95,6 +95,7 @@ _EDITION_WORDS = (
     r"(?:deluxe|expanded|extended|anniversary|edition|édition|reissue|re-issue|"
     r"remaster(?:ed)?|complete|platinum|collector'?s?|special|bonus)"
 )
+_EDITION_WORD_RE = re.compile(rf"\b{_EDITION_WORDS}\b", re.I)
 _EDITION_PAREN_RE = re.compile(rf"\s*[\(\[][^\)\]]*\b{_EDITION_WORDS}\b[^\)\]]*[\)\]]\s*$", re.I)
 _EDITION_DASH_RE = re.compile(rf"\s+[-–—]\s+[^-–—]*\b{_EDITION_WORDS}\b[^-–—]*$", re.I)
 
@@ -141,12 +142,22 @@ _VARIANT_LABELS = (
 )
 
 
-def is_variant(title: str) -> bool:
-    """Slowed, sped up, instru… n'importe où ; remix, live, version… entre parenthèses ou après un tiret."""
+_VERSION_WORD_RE = re.compile(r"\bversion\b", re.I)
+
+
+def is_variant(title: str, album: bool = False) -> bool:
+    """
+    Slowed, sped up, instru… n'importe où ; remix, live, version… entre
+    parenthèses ou après un tiret. Pour un album ou un EP (`album=True`), le
+    mot « version » ne compte pas dans un suffixe d'édition : « Album (Deluxe
+    Version) » est une réédition, pas une version alternative.
+    """
     if _VARIANT_STRONG_RE.search(title):
         return True
     for m in _EXTRAS_RE.finditer(title):
         extra = m.group(1) or m.group(2) or ""
+        if album and _EDITION_WORD_RE.search(extra):
+            extra = _VERSION_WORD_RE.sub(" ", extra)
         if _VARIANT_RE.search(extra):
             return True
     return False

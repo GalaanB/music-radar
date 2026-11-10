@@ -190,3 +190,45 @@ def test_reissue_lists_its_new_tracks(itunes):
 def test_track_list_is_capped():
     titles = [f"T{i}" for i in range(11)]
     assert text.track_list("Déjà sortis", titles) == "Déjà sortis : T0 · T1 · T2 · T3 · T4 · T5 · T6 · T7 … +3"
+
+
+# --- « (Deluxe Version) » : une réédition, pas une version alternative -------------
+
+@pytest.mark.parametrize("title", [
+    "Album (Deluxe Version)", "Album (Version Deluxe)", "Album (Bonus Track Version)",
+    "Album (Extended Version)", "Album - Deluxe Version",
+])
+def test_edition_named_version_is_not_a_variant_for_an_album(title):
+    assert not text.is_variant(title, album=True)
+    assert text.split_edition(title) == ("Album", True)
+    assert not release(1, title).is_variant and not release(1, title, "EP").is_variant
+
+
+@pytest.mark.parametrize("title", [
+    "Album (Live Version)", "Album (Deluxe Live Version)", "Album (Deluxe) [Slowed]",
+    "Album (Acoustic Version)", "Album (Deluxe Edition) - Remix",
+])
+def test_real_variants_of_an_album_are_still_variants(title):
+    assert text.is_variant(title, album=True)
+
+
+def test_single_named_extended_version_keeps_its_variant_note(itunes):
+    single = release(8, "Hit (Extended Version)", "Single")
+    analysis.analyze(single, {1: [release(7, "Hit", "Single", 30), single]})
+    assert single.is_variant and single.note.startswith("🔁 version alternative de « Hit »")
+
+
+def test_deluxe_version_counts_its_new_tracks(itunes):
+    itunes.tracks = {100: ["A", "B", "C"], 200: ["A", "B", "C", "D", "E"]}
+    base, deluxe = release(100, "Album", days_ago=30), release(200, "Album (Deluxe Version)", days_ago=1)
+    analysis.analyze(deluxe, {1: [base, deluxe]})
+    assert deluxe.note == "♻️ réédition · 2 inédits sur 5"
+    assert deluxe.detail == "Inédits : D · E"
+
+
+def test_deluxe_version_can_be_the_original_of_a_later_edition(itunes):
+    itunes.tracks = {200: ["A", "B", "C"], 300: ["A", "B", "C", "D"]}
+    deluxe = release(200, "Album (Deluxe Version)", days_ago=30)
+    complete = release(300, "Album (Complete Edition)", days_ago=1)
+    analysis.analyze(complete, {1: [deluxe, complete]})
+    assert complete.note == "♻️ réédition · 1 inédit sur 4"

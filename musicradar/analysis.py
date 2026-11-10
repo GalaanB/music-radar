@@ -41,7 +41,7 @@ def find_original(r: Release, catalog: dict[int, list[Release]]) -> str:
         x = candidates[0]
         return f"de « {x.title} » ({x.kind.lower()} du {x.release_date:%d/%m/%Y})"
     for track, album in storage.tracks_with_album(r.artist_id, excluding=r.album_id):
-        if text.norm_title(track) == want and not text.is_variant(album):
+        if text.norm_title(track) == want and not text.is_variant(album, album=True):
             return f"de « {track} » (album « {album} »)"
     return ""
 
